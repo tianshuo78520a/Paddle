@@ -13,7 +13,7 @@ if(NOT WIN32)
     if(WITH_NCCL)
         cc_library(nccl_context SRCS nccl_context.cc DEPS collective_helper device_context)
     endif()
-    cc_library(data_loader SRCS data_loader.cc DEPS enforce)
+    cc_library(data_loader SRCS data_loader.cc DEPS enforce boost)
 endif(NOT WIN32)
 
 add_subdirectory(tests)
