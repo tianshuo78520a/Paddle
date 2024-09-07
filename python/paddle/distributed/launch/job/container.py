@@ -168,15 +168,26 @@ class Container:
             return Status.FAILED
 
     def __str__(self):
-        return (
-            'Container rank {} status {} cmd {} code {} log {} \nenv {}'.format(
-                self._rank,
-                self.status,
-                self._entrypoint,
-                self.exit_code,
-                self.errfile,
-                self._env,
-            )
+        launch_debug = os.environ('launch_debug')
+        if launch_debug:
+            return (
+                'Container rank {} status {} cmd {} code {} log {} \nenv {}'.format(
+                    self._rank,
+                    self.status,
+                    self._entrypoint,
+                    self.exit_code,
+                    self.errfile,
+                    self._env,
+                )
+        else:
+            return (
+                'Container rank {} status {} cmd {} code {} log {}'.format(
+                    self._rank,
+                    self.status,
+                    self._entrypoint,
+                    self.exit_code,
+                    self.errfile,
+                )
         )
 
     def logs(self, fn=None, offset=0, whence=1, limit=1000):
