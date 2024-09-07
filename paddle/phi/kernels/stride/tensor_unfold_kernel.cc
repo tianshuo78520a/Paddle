@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 #include "paddle/phi/kernels/tensor_unfold_kernel.h"
+#include "paddle/common/flags.h"
 #include "paddle/phi/backends/all_context.h"
 #include "paddle/phi/core/kernel_registry.h"
+
+COMMON_DECLARE_bool(use_stride_kernel);
 
 namespace phi {
 
@@ -24,6 +27,11 @@ void TensorUnfoldKernel(const Context& dev_ctx,
                         int64_t size,
                         int64_t step,
                         DenseTensor* out) {
+  if (!FLAGS_use_stride_kernel) {
+    PADDLE_THROW(common::errors::Fatal(
+        "FLAGS_use_stride_kernel is closed. Strided kernel "
+        "be called, something wrong has happened!"));
+  }
   if (axis < 0) {
     axis += input.dims().size();
   }
@@ -36,13 +44,13 @@ void TensorUnfoldKernel(const Context& dev_ctx,
   PADDLE_ENFORCE_LE(
       size,
       max_size,
-      phi::errors::InvalidArgument(
+      common::errors::InvalidArgument(
           "paddle.unfold size(%d) must be less than shape[axis](%d).",
           size,
           max_size));
   PADDLE_ENFORCE_GT(step,
                     0,
-                    phi::errors::InvalidArgument(
+                    common::errors::InvalidArgument(
                         "paddle.unfold step must be greater than 0"));
 
   std::vector<int64_t> shape(input_dims.size() + 1);
@@ -61,13 +69,17 @@ void TensorUnfoldKernel(const Context& dev_ctx,
     }
   }
 
-  out->Resize(DDim(shape.data(), static_cast<int>(shape.size())));
-  out->set_strides(DDim(stride.data(), static_cast<int>(stride.size())));
-  out->set_offset(input.offset());
+  auto meta = out->meta();
+  meta.dims = DDim(shape.data(), static_cast<int>(shape.size()));
+  meta.strides = DDim(stride.data(), static_cast<int>(stride.size()));
+  meta.offset = input.offset();
+  out->set_meta(meta);
   out->ResetHolder(input.Holder());
   out->ShareInplaceVersionCounterWith(input);
 }
 
 }  // namespace phi
-PD_REGISTER_KERNEL_FOR_ALL_BACKEND_DTYPE_EXCEPT_CUSTOM(
-    tensor_unfold, STRIDED, phi::TensorUnfoldKernel) {}
+
+PD_REGISTER_KERNEL_FOR_ALL_BACKEND_DTYPE(tensor_unfold,
+                                         STRIDED,
+                                         phi::TensorUnfoldKernel) {}

@@ -52,7 +52,7 @@ class TensorParallelNet(paddle.base.dygraph.Layer):
 
 def filter_fn(param, pos_emb=True, layer_norm=True, bias=True):
     """
-    Layer fliter function for tensor parallelism transformer.
+    Layer filter function for tensor parallelism transformer.
 
     In tensor parallelism of transformer like model, there is 4 kind of param
     that are supposed to be the same in all tensor parallel peers:
@@ -81,9 +81,9 @@ def filter_fn(param, pos_emb=True, layer_norm=True, bias=True):
 class TestFleetMetaOptimizer(unittest.TestCase):
     def setUp(self):
         os.environ["PADDLE_TRAINER_ID"] = "1"
-        os.environ[
-            "PADDLE_TRAINER_ENDPOINTS"
-        ] = "127.0.0.1:36001,127.0.0.1:36002"
+        os.environ["PADDLE_TRAINER_ENDPOINTS"] = (
+            "127.0.0.1:36001,127.0.0.1:36002"
+        )
 
     def test_tensor_parallel_extra_sync(self):
         from paddle.distributed import fleet

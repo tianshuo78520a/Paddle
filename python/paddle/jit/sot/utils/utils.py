@@ -16,19 +16,19 @@ from __future__ import annotations
 
 import builtins
 import inspect
+import sys
 import time
 import types
 import weakref
 from collections import OrderedDict
 from contextlib import contextmanager
 from enum import Enum
-from typing import Any, Generic, Iterable, Iterator, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, TypeVar
 from weakref import WeakValueDictionary
 
 import numpy as np
 
 import paddle
-from paddle.framework import Program
 from paddle.utils import flatten, map_structure
 
 from .envs import (
@@ -43,18 +43,24 @@ from .paddle_api_config import (
     paddle_api_module_prefix,
 )
 
+if TYPE_CHECKING:
+    from paddle._typing import NestedStructure
+    from paddle.framework import Program
+
 T = TypeVar("T")
+T1 = TypeVar("T1")
+T2 = TypeVar("T2")
+T3 = TypeVar("T3")
+ConstTypes = (int, float, str, bool, type(None))
 
 
-class Singleton(Generic[T]):
-    def __init__(self, cls: type[T]):
-        self._cls = cls
-        self._instance = {}
+class Singleton(type):
+    _instances: dict[Any, Any] = {}
 
-    def __call__(self) -> T:
-        if self._cls not in self._instance:
-            self._instance[self._cls] = self._cls()
-        return self._instance[self._cls]
+    def __call__(cls, *args: Any, **kwargs: Any):
+        if cls not in cls._instances:
+            cls._instances[cls] = super().__call__(*args, **kwargs)
+        return cls._instances[cls]
 
 
 class NameGenerator:
@@ -71,42 +77,49 @@ class NameGenerator:
         return name.startswith(self.prefix)
 
 
-_tmp_name_records = None
-
-
-class TmpNameRecords:
+class SymbolRegistry:
     def __init__(self):
-        self.name_generator = NameGenerator(prefix="_sot_tmp_")
+        self.symbol_generator = NameGenerator(prefix="___t_")
         self.tmp_names_record = OrderedDict()
+        self.declared_symbols: set[str] = set()
+        self.symbol_table = {}
 
-    def next_name(self):
-        return self.name_generator.next()
+    def next_symbol(self) -> str:
+        return self.symbol_generator.next()
 
-    def add_tmp_var(self, expr):
-        if expr in self.tmp_names_record:
-            return self.tmp_names_record[expr]
-        else:
-            tmp_name = self.next_name()
-            self.tmp_names_record[expr] = tmp_name
-            return tmp_name
+    def request_symbol(self, expr: str) -> str:
+        if expr in self.symbol_table:
+            return self.symbol_table[expr]
+        symbol = self.next_symbol()
+        self.symbol_table[expr] = symbol
+        return symbol
+
+    def gen_expr(self, expr: str, gen_expr_fn):
+        symbol = self.symbol_table[expr]
+        if symbol in self.declared_symbols:
+            return symbol
+        self.declared_symbols.add(symbol)
+        return f"({symbol} := ({gen_expr_fn()}))"
+
+
+_symbol_registry = SymbolRegistry()
 
 
 @contextmanager
-def tmp_name_guard():
-    global _tmp_name_records
-    old = _tmp_name_records
-    _tmp_name_records = TmpNameRecords()
+def switch_symbol_registry():
+    global _symbol_registry
+    original_registry = _symbol_registry
+    _symbol_registry = SymbolRegistry()
     yield
-    _tmp_name_records = old
+    _symbol_registry = original_registry
 
 
-def current_tmp_name_records():
-    global _tmp_name_records
-    return _tmp_name_records
+def current_symbol_registry():
+    global _symbol_registry
+    return _symbol_registry
 
 
-@Singleton
-class ResumeFnNameFactory:
+class ResumeFnNameFactory(metaclass=Singleton):
     def __init__(self) -> None:
         self.gen = NameGenerator('resume_')
 
@@ -145,6 +158,10 @@ def no_eval_frame(func):
         return retval
 
     return no_eval_frame_func
+
+
+def is_comprehensive_name(name):
+    return name in ["<listcomp>", "<dictcomp>", "<setcomp>", "<genexpr>"]
 
 
 def is_paddle_api(func):
@@ -194,7 +211,12 @@ def is_break_graph_api(func):
     return func in break_graph_set
 
 
-def map_if(*structures, pred, true_fn, false_fn):
+def map_if(
+    *structures: NestedStructure[T1],
+    pred: Callable[[T1], bool],
+    true_fn: Callable[[T1], T2],
+    false_fn: Callable[[T1], T3],
+) -> NestedStructure[T2 | T3]:
     def replace(*args):
         if pred(*args):
             return true_fn(*args)
@@ -267,10 +289,10 @@ class Cache:
         self.hit_num = 0
 
     def key_fn(self, *args, **kwargs):
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def value_fn(self, *args, **kwargs):
-        raise NotImplementedError()
+        raise NotImplementedError
 
 
 def execute_time(func):
@@ -310,8 +332,7 @@ def get_unbound_method(obj, name):
     return getattr(obj.__class__, name)
 
 
-@Singleton
-class GraphLogger:
+class GraphLogger(metaclass=Singleton):
     graph_num: int
     op_num: int
     graphs: list[Program]
@@ -342,7 +363,7 @@ class GraphLogger:
             sub_op_num += 1
         self.ops.append(sub_op_num)
 
-    def add_subgprah_info(self, strs):
+    def add_subgraph_info(self, strs):
         for i in range(len(self.graphs)):
             strs.append(
                 "------------------------------------------------------"
@@ -358,7 +379,7 @@ class GraphLogger:
         strs.append(f"OpNum: {self.get_op_num()}")
 
         # We can display every subgraph info
-        log_do(5, lambda: self.add_subgprah_info(strs))
+        log_do(5, lambda: self.add_subgraph_info(strs))
 
         strs.append("---------------- PaddleSOT graph info ----------------")
         return "\n".join(strs)
@@ -370,8 +391,7 @@ class GraphLogger:
         print(self)
 
 
-@Singleton
-class SotUndefinedVar:
+class SotUndefinedVar(metaclass=Singleton):
     pass
 
 
@@ -383,222 +403,12 @@ def hashable(obj):
         return False
 
 
-class OrderedSet(Generic[T]):
-    """
-    A set that preserves the order of insertion.
-    """
-
-    _data: dict[T, None]
-
-    def __init__(self, items: Iterable[T] | None = None):
-        """
-        Examples:
-            >>> s = OrderedSet([1, 2, 3])
-            >>> s
-            OrderedSet(1, 2, 3)
-            >>> s = OrderedSet()
-            >>> s
-            OrderedSet()
-        """
-        self._data = dict.fromkeys(items) if items is not None else {}
-
-    def __iter__(self) -> Iterator[T]:
-        """
-        Examples:
-            >>> s = OrderedSet([1, 2, 3])
-            >>> for item in s:
-            ...     print(item)
-            1
-            2
-            3
-        """
-        return iter(self._data)
-
-    def __or__(self, other: OrderedSet[T]) -> OrderedSet[T]:
-        """
-        Union two sets.
-
-        Args:
-            other: Another set to be unioned.
-
-        Returns:
-            The union of two sets.
-
-        Examples:
-            >>> s1 = OrderedSet([1, 2, 3])
-            >>> s2 = OrderedSet([2, 3, 4])
-            >>> s1 | s2
-            OrderedSet(1, 2, 3, 4)
-        """
-        return OrderedSet(list(self) + list(other))
-
-    def __ior__(self, other: OrderedSet[T]):
-        """
-        Union two sets in place.
-
-        Args:
-            other: Another set to be unioned.
-
-        Examples:
-            >>> s1 = OrderedSet([1, 2, 3])
-            >>> s2 = OrderedSet([2, 3, 4])
-            >>> s1 |= s2
-            >>> s1
-            OrderedSet(1, 2, 3, 4)
-        """
-        self._data.update(dict.fromkeys(other))
-        return self
-
-    def __and__(self, other: OrderedSet[T]) -> OrderedSet[T]:
-        """
-        Intersect two sets.
-
-        Args:
-            other: Another set to be intersected.
-
-        Returns:
-            The intersection of two sets.
-
-        Examples:
-            >>> s1 = OrderedSet([1, 2, 3])
-            >>> s2 = OrderedSet([2, 3, 4])
-            >>> s1 & s2
-            OrderedSet(2, 3)
-        """
-        return OrderedSet([item for item in self if item in other])
-
-    def __iand__(self, other: OrderedSet[T]):
-        """
-        Intersect two sets in place.
-
-        Args:
-            other: Another set to be intersected.
-
-        Examples:
-            >>> s1 = OrderedSet([1, 2, 3])
-            >>> s2 = OrderedSet([2, 3, 4])
-            >>> s1 &= s2
-            >>> s1
-            OrderedSet(2, 3)
-        """
-        self._data = {item: None for item in self if item in other}
-        return self
-
-    def __sub__(self, other: OrderedSet[T]) -> OrderedSet[T]:
-        """
-        Subtract two sets.
-
-        Args:
-            other: Another set to be subtracted.
-
-        Returns:
-            The subtraction of two sets.
-
-        Examples:
-            >>> s1 = OrderedSet([1, 2, 3])
-            >>> s2 = OrderedSet([2, 3, 4])
-            >>> s1 - s2
-            OrderedSet(1)
-        """
-        return OrderedSet([item for item in self if item not in other])
-
-    def __isub__(self, other: OrderedSet[T]):
-        """
-        Subtract two sets in place.
-
-        Args:
-            other: Another set to be subtracted.
-
-        Examples:
-            >>> s1 = OrderedSet([1, 2, 3])
-            >>> s2 = OrderedSet([2, 3, 4])
-            >>> s1 -= s2
-            >>> s1
-            OrderedSet(1)
-        """
-        self._data = {item: None for item in self if item not in other}
-        return self
-
-    def add(self, item: T):
-        """
-        Add an item to the set.
-
-        Args:
-            item: The item to be added.
-
-        Examples:
-            >>> s = OrderedSet([1, 2, 3])
-            >>> s.add(4)
-            >>> s
-            OrderedSet(1, 2, 3, 4)
-        """
-        self._data.setdefault(item)
-
-    def remove(self, item: T):
-        """
-        Remove an item from the set.
-
-        Args:
-            item: The item to be removed.
-
-        Examples:
-            >>> s = OrderedSet([1, 2, 3])
-            >>> s.remove(2)
-            >>> s
-            OrderedSet(1, 3)
-        """
-        del self._data[item]
-
-    def __contains__(self, item: T) -> bool:
-        """
-        Examples:
-            >>> s = OrderedSet([1, 2, 3])
-            >>> 1 in s
-            True
-            >>> 4 in s
-            False
-        """
-        return item in self._data
-
-    def __len__(self) -> int:
-        """
-        Examples:
-            >>> s = OrderedSet([1, 2, 3])
-            >>> len(s)
-            3
-        """
-        return len(self._data)
-
-    def __bool__(self) -> bool:
-        """
-        Examples:
-            >>> s = OrderedSet([1, 2, 3])
-            >>> bool(s)
-            True
-            >>> s = OrderedSet()
-            >>> bool(s)
-            False
-        """
-        return bool(self._data)
-
-    def __eq__(self, other: object) -> bool:
-        """
-        Examples:
-            >>> s1 = OrderedSet([1, 2, 3])
-            >>> s2 = OrderedSet([1, 2, 3])
-            >>> s1 == s2
-            True
-            >>> s3 = OrderedSet([3, 2, 1])
-            >>> s1 == s3
-            False
-        """
-        if not isinstance(other, OrderedSet):
-            return NotImplemented
-        return list(self) == list(other)
-
-    def __repr__(self) -> str:
-        data_repr = ", ".join(map(repr, self._data))
-        return f"OrderedSet({data_repr})"
+def printable(obj):
+    try:
+        str(obj)
+        return True
+    except Exception as e:
+        return False
 
 
 class StepState(Enum):
@@ -665,8 +475,7 @@ class StepInfo:
         return len(self.dyn_time_costs) < self.REQUIRED_DYN_INFOS
 
 
-@Singleton
-class StepInfoManager:
+class StepInfoManager(metaclass=Singleton):
     def __init__(self):
         self.step_record = {}
         self.current_code = None
@@ -728,3 +537,14 @@ class StepInfoManager:
         self.step_record.clear()
         self.current_code = None
         self.current_step = -1
+
+
+def get_api_fullname(api):
+    api_name = api.__name__
+    module_str = api.__module__
+    while len(module_str) > 0:
+        module = sys.modules[module_str]
+        if hasattr(module, api_name):
+            return module_str + "." + api_name
+        module_str = module_str.rpartition(".")[0]
+    return None

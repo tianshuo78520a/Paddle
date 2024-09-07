@@ -31,14 +31,17 @@ void WeightOnlyLinearKernel(const Context& dev_ctx,
                             const DenseTensor& weight_scale,
                             const std::string& weight_dtype,
                             const int32_t arch,
+                            const int32_t group_size,
                             DenseTensor* out) {
 #if defined(PADDLE_WITH_CUTLASS)
   PADDLE_ENFORCE_EQ(
-      ((arch == 80) || (arch == 70) || (arch == 75) || (arch == 86)),
+      ((arch == 70) || (arch == 75) || (arch == 80) || (arch == 86) ||
+       (arch == 89) || (arch == 90)),
       true,
-      phi::errors::InvalidArgument("Currently, arch only support 70, 80."));
+      common::errors::InvalidArgument(
+          "Currently, arch only support 70, 75, 80, 86, 89, 90."));
 #else
-  PADDLE_THROW(phi::errors::Unimplemented(
+  PADDLE_THROW(common::errors::Unimplemented(
       "Please compile with cutlass to make cutlass available"));
 #endif
 
@@ -50,12 +53,12 @@ void WeightOnlyLinearKernel(const Context& dev_ctx,
   T* out_data = out->data<T>();
   const auto x_dims = x.dims();
   const auto w_dims = weight.dims();
-  int n = weight_scale.dims()[0];
+  int n = group_size > 0 ? weight_scale.dims()[1] : weight_scale.dims()[0];
   int k = w_dims[1];
   int m = x.numel() / k;
 
   // m > 3: run gemm.
-  if (m > 3 || weight_dtype == "int4" || (arch == 70)) {
+  if (m > 3 || (arch == 70)) {
 /*
 Note(Zhengzekang):
 If using arch = 70, we always dispatch to weightonly Gemm,
@@ -88,6 +91,7 @@ we havenot support sm70 weightonly gemv, because sm70 weight layout is RowMajor.
             m,
             n,
             k,
+            group_size,
             "none",
             mixgemm_workspace_data,
             mixgemm_workspace_size_bytes,
@@ -103,6 +107,7 @@ we havenot support sm70 weightonly gemv, because sm70 weight layout is RowMajor.
             m,
             n,
             k,
+            group_size,
             mixgemm_workspace_data,
             mixgemm_workspace_size_bytes,
             dev_ctx.stream());
@@ -133,6 +138,7 @@ we havenot support sm70 weightonly gemv, because sm70 weight layout is RowMajor.
             m,
             n,
             k,
+            group_size,
             "none",
             mixgemm_workspace_data,
             mixgemm_workspace_size_bytes,
@@ -148,28 +154,49 @@ we havenot support sm70 weightonly gemv, because sm70 weight layout is RowMajor.
             m,
             n,
             k,
+            group_size,
             mixgemm_workspace_data,
             mixgemm_workspace_size_bytes,
             dev_ctx.stream());
       }
     }
 #else
-    PADDLE_THROW(phi::errors::Unimplemented(
+    PADDLE_THROW(common::errors::Unimplemented(
         "Please compile with cutlass to make cutlass available"));
 #endif
-  } else {  // m == 1: gemv
+  } else {  // m <= 3: gemv
     if (weight_dtype == "int8") {
-      GemvWeightonlyInt8Wrapper<T, Context>(dev_ctx,
-                                            x_data,
-                                            weight_data,
-                                            bias_data,
-                                            weight_scale_data,
-                                            m,
-                                            n,
-                                            k,
-                                            "None",
-                                            out->data<T>());
-    }  // TODO(lizhenyun) support weight_only_gemv for int4.
+      WeightOnlyGemvWrapper<T, Context>(
+          dev_ctx,
+          x_data,
+          weight_data,
+          bias_data,
+          weight_scale_data,
+          m,
+          n,
+          k,
+          group_size,
+          "int8",
+          group_size > 0 ? "group_wise" : "per_channel",
+          "None",
+          out->data<T>());
+
+    } else if (weight_dtype == "int4") {
+      WeightOnlyGemvWrapper<T, Context>(
+          dev_ctx,
+          x_data,
+          weight_data,
+          bias_data,
+          weight_scale_data,
+          m,
+          n,
+          k,
+          group_size,
+          "int4",
+          group_size > 0 ? "group_wise" : "per_channel",
+          "None",
+          out->data<T>());
+    }
   }
 }
 }  // namespace phi

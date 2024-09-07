@@ -29,7 +29,7 @@ class TestFcElementwiseLayerNormFusePattern(PassTest):
      \     /
        Add
         |
-      LayerNrom
+      LayerNorm
     """
 
     def is_program_valid(self, program=None):
@@ -39,7 +39,7 @@ class TestFcElementwiseLayerNormFusePattern(PassTest):
         for x_shape in [[3, 2]]:
             for w_shape in [[2, 3]]:
                 for y_shape in [[1, 3], [3]]:
-                    for bais_shape in [[3, 3]]:
+                    for bias_shape in [[3, 3]]:
                         for with_relu in [True, False]:
                             with paddle.pir_utils.IrGuard():
                                 start_prog = paddle.static.Program()
@@ -68,7 +68,7 @@ class TestFcElementwiseLayerNormFusePattern(PassTest):
 
                                     bias1 = paddle.static.data(
                                         name='bias1',
-                                        shape=bais_shape,
+                                        shape=bias_shape,
                                         dtype='float32',
                                     )
 
@@ -78,9 +78,13 @@ class TestFcElementwiseLayerNormFusePattern(PassTest):
                                     )
                                     out = layer_norm(add_out)
                                     out = paddle.assign(out)
-                                    self.pass_list.append('fc_fuse_pass')
-                                    self.pass_list.append(
-                                        'fc_elementwise_layernorm_fuse_pass'
+                                    self.pass_attr_list.append(
+                                        {'matmul_add_act_fuse_pass': {}}
+                                    )
+                                    self.pass_attr_list.append(
+                                        {
+                                            'fc_elementwise_layernorm_fuse_pass': {}
+                                        }
                                     )
                                     self.feeds = {
                                         "x": np.random.random(x_shape).astype(
@@ -93,7 +97,7 @@ class TestFcElementwiseLayerNormFusePattern(PassTest):
                                             "float32"
                                         ),
                                         "bias1": np.random.random(
-                                            bais_shape
+                                            bias_shape
                                         ).astype("float32"),
                                     }
                                     self.fetch_list = [out]

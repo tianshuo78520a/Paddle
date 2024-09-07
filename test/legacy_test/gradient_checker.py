@@ -31,11 +31,11 @@ def _product(t):
 
 
 def dtype_to_np_dtype(dtype):
-    if dtype == core.VarDesc.VarType.FP32 or dtype == core.DataType.FLOAT32:
+    if dtype == paddle.float32 or dtype == core.DataType.FLOAT32:
         return np.float32
-    elif dtype == core.VarDesc.VarType.FP64 or dtype == core.DataType.FLOAT64:
+    elif dtype == paddle.float64 or dtype == core.DataType.FLOAT64:
         return np.float64
-    elif dtype == core.VarDesc.VarType.FP16 or dtype == core.DataType.FLOAT16:
+    elif dtype == paddle.float16 or dtype == core.DataType.FLOAT16:
         return np.float16
     else:
         raise ValueError("Not supported data type " + str(dtype))
@@ -83,7 +83,7 @@ def var_to_np_array_in_scope(scope, place, name):
 
 
 def make_jacobian(x, y_size, np_dtype):
-    if isinstance(x, (base.framework.Variable, paddle.pir.OpResult)):
+    if isinstance(x, (base.framework.Variable, paddle.pir.Value)):
         return np.zeros((_product(x.shape), y_size), dtype=np_dtype)
     elif isinstance(x, Sequence):
         jacobians = list(
@@ -244,8 +244,8 @@ def _compute_numerical_jacobian_pir(
         where "x_size" is the number of elements in x and
         "y_size" is the number of elements in each y_i.
     """
-    if not isinstance(x, paddle.pir.OpResult):
-        raise TypeError('x is not OpResult')
+    if not isinstance(x, paddle.pir.Value):
+        raise TypeError('x is not Value')
 
     # To compute the jacobian, treat x and y as one-dimensional vectors.
     y = _as_list(y)
@@ -308,8 +308,8 @@ def _compute_analytical_jacobian_pir(
         where "x_size" is the number of elements in x_i and
         "dy_size" is the number of elements in y.
     """
-    if not isinstance(x, (list, paddle.pir.OpResult)):
-        raise TypeError('x is not OpResult or list of OpResult')
+    if not isinstance(x, (list, paddle.pir.Value)):
+        raise TypeError('x is not Value or list of Value')
 
     np_type = dtype_to_np_dtype(y[i].dtype)
     exe = paddle.static.Executor(place)
@@ -324,7 +324,7 @@ def _compute_analytical_jacobian_pir(
     filted_idx, filted_dx = zip(*filted)
 
     # get the name in feeds of dyi
-    name = 'dys_%s' % i
+    name = f'dys_{i}'
     np_t = np.array(feeds[name]).astype(np_type)
     shape = np_t.shape
     np_t = np_t.flatten()
@@ -353,7 +353,7 @@ def _compute_analytical_jacobian_pir(
 def grad_check(
     x,
     y,
-    x_init=None,
+    fetch_list=None,
     feeds=None,
     place=None,
     program=None,
@@ -392,7 +392,7 @@ def grad_check(
     if in_pir_mode():
         analytical = []
         for i in range(len(y)):
-            name = 'dys_%s' % i
+            name = f'dys_{i}'
             feeds.update(
                 {
                     name: np.zeros(
@@ -403,12 +403,12 @@ def grad_check(
         for i in range(len(y)):
             analytical.append(
                 _compute_analytical_jacobian_pir(
-                    program, x, i, y, x_init, feeds, place
+                    program, x, i, y, fetch_list, feeds, place
                 )
             )
         numerical = [
             _compute_numerical_jacobian_pir(
-                program, xi, y, x_init, feeds, place, eps
+                program, xi, y, fetch_list, feeds, place, eps
             )
             for xi in x
         ]
@@ -446,8 +446,8 @@ def grad_check(
         n = numerical[x_idx][y_idx]
         if not np.allclose(a, n, rtol, atol):
             msg = (
-                f'Jacobian mismatch for output {y_idx} in y'
-                f'with respect to input {x_idx} in x on {str(place)},\n'
+                f'Jacobian mismatch for output {y_idx} in y '
+                f'with respect to input {x_idx} in x on {place},\n'
                 f'numerical:{n}\nanalytical:{a}\n'
             )
             return fail_test(msg)
@@ -780,7 +780,7 @@ def get_pir_static_double_grad(
             yi.persistable = True
             np_type = dtype_to_np_dtype(yi.dtype)
             dy = paddle.static.data(
-                name='Dgrad_%s' % i,
+                name=f'Dgrad_{i}',
                 shape=yi.shape,
                 dtype=np_type,
             )
@@ -797,7 +797,7 @@ def get_pir_static_double_grad(
             yi.persistable = True
             np_type = dtype_to_np_dtype(yi.dtype)
             dy = paddle.static.data(
-                name='Dgrad_%s' % i,
+                name=f'Dgrad_{i}',
                 shape=yi.shape,
                 dtype=np_type,
             )
@@ -851,12 +851,12 @@ def get_pir_static_double_grad(
         yi = y[i]
         np_type = dtype_to_np_dtype(yi.dtype)
         dy = paddle.static.data(
-            name='dys_%s' % i,
+            name=f'dys_{i}',
             shape=yi.shape,
             dtype=np_type,
         )
         value = np.ones(yi.shape, dtype=np_type)
-        feeds.update({'dys_%s' % i: value})
+        feeds.update({f'dys_{i}': value})
         dys.append(dy)
 
     # append second order backward
@@ -1130,7 +1130,7 @@ def get_pir_static_triple_grad(
             yi.persistable = True
             np_type = dtype_to_np_dtype(yi.dtype)
             dy = paddle.static.data(
-                name='Tgrad_%s' % i,
+                name=f'Tgrad_{i}',
                 shape=yi.shape,
                 dtype=np_type,
             )
@@ -1147,7 +1147,7 @@ def get_pir_static_triple_grad(
             yi.persistable = True
             np_type = dtype_to_np_dtype(yi.dtype)
             dy = paddle.static.data(
-                name='Tgrad_%s' % i,
+                name=f'Tgrad_{i}',
                 shape=yi.shape,
                 dtype=np_type,
             )

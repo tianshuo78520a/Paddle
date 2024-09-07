@@ -203,7 +203,7 @@ void SetValueGradImpl(const Context& dev_ctx,
       auto value_grad_dims = value_grad->dims();
       auto fake_value_grad_dims = out_dims;
 
-      // Create an extented shape according to the rules of broadcast.
+      // Create an extended shape according to the rules of broadcast.
       auto value_grad_dims_size = value_grad_dims.size();
 
       int num_decrease = 0;
@@ -390,11 +390,33 @@ void SetValueGradKernel(const Context& dev_ctx,
                                       value_grad);
       break;
     default:
-      PADDLE_THROW(phi::errors::InvalidArgument(
+      PADDLE_THROW(common::errors::InvalidArgument(
           "The rank of set_value_grad's input should be less than 7, but "
           "received %d.",
           rank));
   }
+}
+
+template <typename T, typename Context>
+void SetValueWithScalarGradKernel(const Context& dev_ctx,
+                                  const DenseTensor& out_grad,
+                                  const IntArray& starts,
+                                  const IntArray& ends,
+                                  const IntArray& steps,
+                                  const std::vector<int64_t>& axes,
+                                  const std::vector<int64_t>& decrease_axes,
+                                  const std::vector<int64_t>& none_axes,
+                                  DenseTensor* x_grad) {
+  SetValueGradKernel<T, Context>(dev_ctx,
+                                 out_grad,
+                                 starts,
+                                 ends,
+                                 steps,
+                                 axes,
+                                 decrease_axes,
+                                 none_axes,
+                                 x_grad,
+                                 nullptr);
 }
 
 }  // namespace phi
@@ -403,6 +425,15 @@ PD_REGISTER_KERNEL(set_value_grad,
                    XPU,
                    ALL_LAYOUT,
                    phi::SetValueGradKernel,
+                   float,
+                   phi::dtype::float16,
+                   int,
+                   int64_t) {}
+
+PD_REGISTER_KERNEL(set_value_with_scalar_grad,
+                   XPU,
+                   ALL_LAYOUT,
+                   phi::SetValueWithScalarGradKernel,
                    float,
                    phi::dtype::float16,
                    int,

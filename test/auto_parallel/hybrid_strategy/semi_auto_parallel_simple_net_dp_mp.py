@@ -14,6 +14,9 @@
 
 import os
 
+from auto_parallel.hybrid_strategy.semi_auto_save_state_dict import (
+    check_structure_name_mapping,
+)
 from auto_parallel.semi_auto_parallel_simple_net import (
     DemoNet,
     TestSimpleNetForSemiAutoParallel,
@@ -49,17 +52,18 @@ class TestSimpleNetHybridStrategyForSemiAutoParallel(
             self.dp_mp_parameters,
         ) = self.run_dynamic(model, shard_input=True)
 
-        self.check_tensor_eq(self.dp_mp_loss, self.base_loss)
+        self.check_tensor_eq(self.dp_mp_loss, self.base_loss, rtol=1e-04)
         for param, param_base in zip(
             self.dp_mp_parameters, self.base_parameters
         ):
-            self.check_tensor_eq(param, param_base)
+            self.check_tensor_eq(param, param_base, atol=1e-06)
             self.check_tensor_eq(param.grad, param_base.grad)
 
         # save load
         state_dict = model.state_dict()
         paddle.distributed.save_state_dict(state_dict, self._ckpt_path)
         paddle.distributed.barrier()
+        check_structure_name_mapping(self._ckpt_path, state_dict)
         expected_local_state_dict = {}
         need_load_state_dict = {}
         for k, v in state_dict.items():

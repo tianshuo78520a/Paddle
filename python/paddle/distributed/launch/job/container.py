@@ -92,7 +92,7 @@ class Container:
         kwargs = {k: v for k, v in kwargs.items() if isinstance(v, str)}
         self._env.update(kwargs)
 
-    def _valide_env(self):
+    def _validate_env(self):
         for k, v in self._env.items():
             assert isinstance(k, str) and isinstance(
                 v, str
@@ -114,7 +114,7 @@ class Container:
         if self._proc and self._proc.alive():
             return True
 
-        self._valide_env()
+        self._validate_env()
 
         self._stdout = self._get_fd(self._out) or sys.stdout
         if self._out == self._err:
@@ -168,6 +168,7 @@ class Container:
             return Status.FAILED
 
     def __str__(self):
+<<<<<<< HEAD
         launch_debug = os.environ('launch_debug')
         if launch_debug:
             return (
@@ -189,6 +190,9 @@ class Container:
                     self.errfile,
                 )
         )
+=======
+        return f'Container rank {self._rank} status {self.status} cmd {self._entrypoint} code {self.exit_code} log {self.errfile} \nenv {self._env}'
+>>>>>>> f9b829273b6769ffa9fff8b0adb196338f4b1723
 
     def logs(self, fn=None, offset=0, whence=1, limit=1000):
         if not self._log_handler:

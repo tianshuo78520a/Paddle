@@ -17,12 +17,13 @@
 #include <chrono>
 #include <ctime>
 #include "paddle/fluid/pir/transforms/pd_op_to_kernel_pass.h"
-#include "paddle/pir/core/ir_context.h"
+#include "paddle/pir/include/core/ir_context.h"
 
 #include "paddle/cinn/hlir/dialect/operator/ir/manual_op.h"
 #include "paddle/cinn/hlir/dialect/operator/ir/op_dialect.h"
 #include "paddle/cinn/hlir/dialect/operator/transforms/add_broadcast_to_elementwise_pass.h"
-#include "paddle/cinn/hlir/dialect/operator/transforms/group_merge/cinn_group_lowering_pass.h"
+#include "paddle/cinn/hlir/dialect/operator/transforms/cinn_group_cluster_pass.h"
+#include "paddle/cinn/hlir/dialect/operator/transforms/lowering_pass/lower_cinn_fusion_op_pass.h"
 #include "paddle/cinn/hlir/dialect/operator/transforms/pd_to_cinn_pass.h"
 #include "paddle/fluid/framework/new_executor/interpretercore.h"
 #include "paddle/fluid/pir/dialect/operator/ir/op_attribute.h"
@@ -31,9 +32,9 @@
 #include "paddle/fluid/pir/dialect/operator/ir/pd_op.h"
 #include "paddle/fluid/pir/dialect/operator/utils/utils.h"
 #include "paddle/fluid/pir/transforms/build_cinn_pass.h"
-#include "paddle/pir/core/operation_utils.h"
-#include "paddle/pir/pass/pass.h"
-#include "paddle/pir/pass/pass_manager.h"
+#include "paddle/pir/include/core/operation_utils.h"
+#include "paddle/pir/include/pass/pass.h"
+#include "paddle/pir/include/pass/pass_manager.h"
 
 namespace paddle {
 namespace test {
@@ -57,7 +58,7 @@ bool AllClose(const phi::DenseTensor& a,
       }
     }
   } else {
-    PADDLE_THROW(phi::errors::Unimplemented(
+    PADDLE_THROW(common::errors::Unimplemented(
         "ONLY support float32, but received %s", a.dtype()));
   }
 
@@ -124,7 +125,7 @@ std::vector<phi::DenseTensor> SubGraphChecker::RunPhiResult() {
   InitInputs(phi_input_values_, phi_program_->block(), &inner_scope_);
   AppendFetchOp(phi_program_->block(), &phi_fetch_names_, kOutputPrefix);
 
-  paddle::platform::Place place = paddle::platform::CUDAPlace(0);
+  phi::Place place = phi::GPUPlace(0);
   phi_kernel_program_ =
       paddle::dialect::PdOpLowerToKernelPass(phi_program_.get(), place);
 
@@ -165,16 +166,15 @@ std::vector<phi::DenseTensor> SubGraphChecker::RunCinnResult() {
   ctx->GetOrRegisterDialect<paddle::dialect::OperatorDialect>();
   ctx->GetOrRegisterDialect<cinn::dialect::OperatorDialect>();
 
-  cinn::dialect::ir::PdOp2CinnOpConverter(prim_program_.get());
-
   pir::PassManager pm(ctx);
-  pm.AddPass(
-      std::make_unique<cinn::dialect::ir::AddBroadcastToElementwisePass>());
+  pm.AddPass(cinn::dialect::ir::CreatePdOpToCinnOpPass());
+  pm.AddPass(cinn::dialect::ir::CreateAddBroadcastToElementwisePass());
   pm.AddPass(pir::CreateBuildCinnPass());
-  pm.AddPass(cinn::dialect::ir::CreateCinnGroupLoweringPass());
+  pm.AddPass(cinn::dialect::ir::CreateCinnGroupClusterPass());
+  pm.AddPass(cinn::dialect::ir::CreateLowerCinnFusionOpPass());
   pm.Run(prim_program_.get());
 
-  paddle::platform::Place place = paddle::platform::CUDAPlace(0);
+  phi::Place place = phi::GPUPlace(0);
 
   auto kernel_program =
       paddle::dialect::PdOpLowerToKernelPass(prim_program_.get(), place);
@@ -220,7 +220,7 @@ std::vector<double> SubGraphChecker::CheckSpeed() {
 
 double SubGraphChecker::RunPhiSpeed() {
   RemoveFetchOp(phi_program_->block());
-  paddle::platform::Place place = paddle::platform::CUDAPlace(0);
+  phi::Place place = phi::GPUPlace(0);
   phi_kernel_program_ =
       paddle::dialect::PdOpLowerToKernelPass(phi_program_.get(), place);
 
@@ -263,16 +263,15 @@ double SubGraphChecker::RunCinnSpeed() {
   ctx->GetOrRegisterDialect<paddle::dialect::OperatorDialect>();
   ctx->GetOrRegisterDialect<cinn::dialect::OperatorDialect>();
 
-  cinn::dialect::ir::PdOp2CinnOpConverter(prim_program_.get());
-
   pir::PassManager pm(ctx);
-  pm.AddPass(
-      std::make_unique<cinn::dialect::ir::AddBroadcastToElementwisePass>());
+  pm.AddPass(cinn::dialect::ir::CreatePdOpToCinnOpPass());
+  pm.AddPass(cinn::dialect::ir::CreateAddBroadcastToElementwisePass());
   pm.AddPass(pir::CreateBuildCinnPass());
-  pm.AddPass(cinn::dialect::ir::CreateCinnGroupLoweringPass());
+  pm.AddPass(cinn::dialect::ir::CreateCinnGroupClusterPass());
+  pm.AddPass(cinn::dialect::ir::CreateLowerCinnFusionOpPass());
   pm.Run(prim_program_.get());
 
-  paddle::platform::Place place = paddle::platform::CUDAPlace(0);
+  phi::Place place = phi::GPUPlace(0);
 
   RemoveFetchOp(prim_program_->block());
 
@@ -325,7 +324,7 @@ void SubGraphChecker::RemoveFetchOp(pir::Block* block) {
 void SubGraphChecker::InitInputs(const std::vector<pir::Value>& input_values,
                                  pir::Block* block,
                                  paddle::framework::Scope* scope) {
-  // build a proram, init data and set parameter to scope
+  // build a program, init data and set parameter to scope
   ::pir::IrContext* ctx = ::pir::IrContext::Instance();
   ctx->GetOrRegisterDialect<paddle::dialect::OperatorDialect>();
 
@@ -354,7 +353,7 @@ void SubGraphChecker::InitInputs(const std::vector<pir::Value>& input_values,
   }
 
   if (input_values.size() > 0) {
-    paddle::platform::Place place = paddle::platform::CUDAPlace(0);
+    phi::Place place = phi::GPUPlace(0);
 
     auto kernel_program =
         paddle::dialect::PdOpLowerToKernelPass(program.get(), place);

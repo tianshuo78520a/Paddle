@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import numpy as np
 
+import paddle
 from paddle.base.data_feeder import check_type, convert_dtype
 
 from ..framework import core
@@ -33,20 +36,20 @@ DEFAULT_PRINT_OPTIONS = PrintOptions()
 
 
 def set_printoptions(
-    precision=None,
-    threshold=None,
-    edgeitems=None,
-    sci_mode=None,
-    linewidth=None,
-):
+    precision: int | None = None,
+    threshold: int | None = None,
+    edgeitems: int | None = None,
+    sci_mode: bool | None = None,
+    linewidth: int | None = None,
+) -> None:
     """Set the printing options for Tensor.
 
     Args:
-        precision (int, optional): Number of digits of the floating number, default 8.
-        threshold (int, optional): Total number of elements printed, default 1000.
-        edgeitems (int, optional): Number of elements in summary at the beginning and ending of each dimension, default 3.
-        sci_mode (bool, optional): Format the floating number with scientific notation or not, default False.
-        linewidth (int, optional): Number of characters each line, default 80.
+        precision (int|None, optional): Number of digits of the floating number, default 8.
+        threshold (int|None, optional): Total number of elements printed, default 1000.
+        edgeitems (int|None, optional): Number of elements in summary at the beginning and ending of each dimension, default 3.
+        sci_mode (bool|None, optional): Format the floating number with scientific notation or not, default False.
+        linewidth (int|None, optional): Number of characters each line, default 80.
 
 
     Returns:
@@ -238,7 +241,7 @@ def to_string(var, prefix='Tensor'):
     indent = len(prefix) + 1
 
     dtype = convert_dtype(var.dtype)
-    if var.dtype == core.VarDesc.VarType.BF16:
+    if var.dtype == paddle.bfloat16:
         dtype = 'bfloat16'
 
     _template = "{prefix}(shape={shape}, dtype={dtype}, place={place}, stop_gradient={stop_gradient},\n{indent}{data})"
@@ -247,7 +250,7 @@ def to_string(var, prefix='Tensor'):
     if not tensor._is_initialized():
         return "Tensor(Not initialized)"
 
-    if var.dtype == core.VarDesc.VarType.BF16:
+    if var.dtype == paddle.bfloat16:
         var = var.astype('float32')
     np_var = var.numpy(False)
 
@@ -280,7 +283,12 @@ def to_string(var, prefix='Tensor'):
 
 
 def _format_dense_tensor(tensor, indent):
-    if tensor.dtype == core.VarDesc.VarType.BF16:
+    if (
+        tensor.dtype == paddle.bfloat16
+        or tensor.dtype == core.VarDesc.VarType.BF16
+        or tensor.dtype == core.VarDesc.VarType.FP8_E4M3FN
+        or tensor.dtype == core.VarDesc.VarType.FP8_E5M2
+    ):
         tensor = tensor.astype('float32')
 
     # TODO(zhouwei): will remove 0-D Tensor.numpy() hack
@@ -293,14 +301,14 @@ def _format_dense_tensor(tensor, indent):
         for dim in tensor.shape:
             size *= dim
 
-    sumary = False
+    summary = False
     if size > DEFAULT_PRINT_OPTIONS.threshold:
-        sumary = True
+        summary = True
 
     max_width, signed = _get_max_width(_to_summary(np_tensor))
 
     data = _format_tensor(
-        np_tensor, sumary, indent=indent, max_width=max_width, signed=signed
+        np_tensor, summary, indent=indent, max_width=max_width, signed=signed
     )
     return data
 
@@ -360,7 +368,7 @@ def dist_tensor_to_string(tensor, prefix='Tensor'):
     # is ready.
     indent = len(prefix) + 1
     dtype = convert_dtype(tensor.dtype)
-    if tensor.dtype == core.VarDesc.VarType.BF16:
+    if tensor.dtype == paddle.bfloat16:
         dtype = 'bfloat16'
 
     if not tensor._is_dense_tensor_hold_allocation():
@@ -376,7 +384,15 @@ def dist_tensor_to_string(tensor, prefix='Tensor'):
         )
     else:
         indent = len(prefix) + 1
-        data = _format_dense_tensor(tensor, indent)
+
+        # If we print a dist_tensor with bf16 dtype and Partial placement, it is essential to ensure that the AllReduce communication
+        # is performed in bf16. After completing the communication, convert it to fp32, and then convert it into a numpy array.
+        from paddle.distributed import Replicate, reshard
+
+        placements = [Replicate() for _ in range(tensor.process_mesh.ndim)]
+        global_tensor = reshard(tensor, tensor.process_mesh, placements)
+
+        data = _format_dense_tensor(global_tensor, indent)
         _template = "{prefix}(shape={shape}, dtype={dtype}, place={place}, stop_gradient={stop_gradient}, process_mesh={process_mesh}, placements={placements}, GlobalDenseTensor=\n{indent}{data})"
         return _template.format(
             prefix=prefix,
@@ -395,7 +411,7 @@ def tensor_to_string(tensor, prefix='Tensor'):
     indent = len(prefix) + 1
 
     dtype = convert_dtype(tensor.dtype)
-    if tensor.dtype == core.VarDesc.VarType.BF16:
+    if tensor.dtype == paddle.bfloat16:
         dtype = 'bfloat16'
 
     _template = "{prefix}(shape={shape}, dtype={dtype}, place={place}, stop_gradient={stop_gradient},\n{indent}{data})"

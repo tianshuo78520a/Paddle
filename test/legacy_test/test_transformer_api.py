@@ -15,6 +15,7 @@
 import unittest
 
 import numpy as np
+from utils import static_guard
 
 import paddle
 from paddle import base
@@ -251,9 +252,9 @@ def layer_norm(x, normalized_shape, norm, epsilon=1e-05, act=None):
         batch_size, src_len, d_model = x.shape
         x = x.reshape((batch_size * src_len, d_model))
         mu = np.mean(x, axis=1, keepdims=True)
-        sigma_squar = np.sum(np.square(x - mu), axis=1) / d_model
+        sigma_square = np.sum(np.square(x - mu), axis=1) / d_model
         x1_up = x - mu
-        x1_down_1 = sigma_squar + epsilon
+        x1_down_1 = sigma_square + epsilon
         x1_down = np.sqrt(x1_down_1)
         x1_down = x1_down.reshape((x1_down.shape[0], 1))
         x1 = x1_up / x1_down
@@ -282,8 +283,15 @@ class TestTransformer(unittest.TestCase):
     def test_multi_head_attention(self):
         def multihead_attention_test_helper(self_attention, cache):
             paddle.seed(2020)
-            paddle.framework.random._manual_program_seed(2020)
-            # self_attention|cross_attention, cache|No cache
+            if paddle.framework.use_pir_api():
+                with paddle.pir_utils.OldIrGuard():
+                    # Note: dygraph use self.main_program.global_block().create_parameter(), it's need manual seed to old Program
+                    paddle.framework.random._manual_program_seed(2020)
+                paddle.framework.random._manual_program_seed(2020)
+            else:
+                paddle.framework.random._manual_program_seed(
+                    2020
+                )  # self_attention|cross_attention, cache|No cache
             with base.dygraph.guard(base.CPUPlace()):
                 # generate params for multi_head_attention
                 (
@@ -400,7 +408,15 @@ class TestTransformer(unittest.TestCase):
     def test_transformer_encoder_layer(self):
         with base.dygraph.guard(base.CPUPlace()):
             paddle.framework.seed(2020)
-            paddle.framework.random._manual_program_seed(2020)
+            if paddle.framework.use_pir_api():
+                with paddle.pir_utils.OldIrGuard():
+                    # Note: dygraph use self.main_program.global_block().create_parameter(), it's need manual seed to old Program
+                    paddle.framework.random._manual_program_seed(2020)
+                paddle.framework.random._manual_program_seed(2020)
+            else:
+                paddle.framework.random._manual_program_seed(
+                    2020
+                )  # self_attention|cross_attention, cache|No cache
 
             ffn_fc1_act = "relu"
             # 1.generate basic params
@@ -465,7 +481,15 @@ class TestTransformer(unittest.TestCase):
     def test_transformer_encoder_layer_attr_1(self):
         with base.dygraph.guard(base.CPUPlace()):
             paddle.framework.seed(2020)
-            paddle.framework.random._manual_program_seed(2020)
+            if paddle.framework.use_pir_api():
+                with paddle.pir_utils.OldIrGuard():
+                    # Note: dygraph use self.main_program.global_block().create_parameter(), it's need manual seed to old Program
+                    paddle.framework.random._manual_program_seed(2020)
+                paddle.framework.random._manual_program_seed(2020)
+            else:
+                paddle.framework.random._manual_program_seed(
+                    2020
+                )  # self_attention|cross_attention, cache|No cache
 
             ffn_fc1_act = "relu"
             # 1.generate basic params
@@ -1038,6 +1062,30 @@ class TestTransformer(unittest.TestCase):
             d_model, n_head, dim_feedforward=dim_feedforward
         )
         mask = transformer.generate_square_subsequent_mask(length)
+
+
+class TestPirMultiHeadAttention(unittest.TestCase):
+    def run_program(self):
+        with static_guard():
+            paddle.seed(1)
+            startup = paddle.static.Program()
+            main = paddle.static.Program()
+            with paddle.static.program_guard(main, startup):
+                query = paddle.rand((2, 4, 128))
+                attn_mask = paddle.rand((2, 2, 4, 4))
+                multi_head_attn = paddle.nn.MultiHeadAttention(128, 2)
+                output = multi_head_attn(query, None, None, attn_mask=attn_mask)
+
+                exe = paddle.static.Executor()
+                exe.run(startup)
+                out = exe.run(feed={}, fetch_list=[output])
+                return out
+
+    def test_pir(self):
+        out1 = self.run_program()
+        with paddle.pir_utils.IrGuard():
+            out2 = self.run_program()
+        np.testing.assert_allclose(out1, out2)
 
 
 if __name__ == "__main__":

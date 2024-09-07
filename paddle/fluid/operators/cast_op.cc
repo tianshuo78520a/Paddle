@@ -17,7 +17,7 @@ limitations under the License. */
 #include "paddle/fluid/framework/convert_utils.h"
 #include "paddle/fluid/framework/infershape_utils.h"
 #include "paddle/fluid/framework/op_registry.h"
-#include "paddle/fluid/platform/float16.h"
+#include "paddle/phi/common/float16.h"
 
 #include "paddle/phi/core/infermeta_utils.h"
 #include "paddle/phi/infermeta/unary.h"
@@ -76,7 +76,7 @@ class CastCompositeGradOpMaker : public prim::CompositeGradOpMakerBase {
     paddle::Tensor *x_grad = this->GetOutputPtr(&x_grad_t);
     std::string x_grad_name = this->GetOutputName(x_grad_t);
 
-    VLOG(6) << "Runing cast_grad composite func";
+    VLOG(6) << "Running cast_grad composite func";
     prim::cast_grad<prim::DescTensor>(x, out_grad, x_grad);
 
     this->RecoverOutputName(x_grad_t, x_grad_name);
@@ -94,11 +94,11 @@ class CastOp : public framework::OperatorWithKernel {
     auto *tensor = ctx.Input<phi::DenseTensor>("X");
     PADDLE_ENFORCE_EQ(tensor->IsInitialized(),
                       true,
-                      platform::errors::PreconditionNotMet(
+                      common::errors::PreconditionNotMet(
                           "The tensor of Input(X) is not initialized."));
     auto &tensor_place = tensor->place();
     // NOTE: cuda pinned tensor need to copy its data to target place
-    if (platform::is_cuda_pinned_place(tensor_place)) {
+    if (tensor_place.GetType() == phi::AllocationType::GPUPINNED) {
       return phi::KernelKey(framework::TransToProtoVarType(tensor->dtype()),
                             ctx.device_context().GetPlace());
     }
@@ -137,15 +137,5 @@ REGISTER_OPERATOR(cast,
                   ops::CastOpGradMaker<paddle::framework::OpDesc>,
                   ops::CastOpGradMaker<paddle::imperative::OpBase>,
                   ops::CastCompositeGradOpMaker,
-                  ops::CastOpProtoMaker,
-                  CastInferShapeFunctor);
-
-// [ why register transfer_dtype_op alias with cast_op? ]
-// In case of InterpreterCore, if we reuse cast_op, we cannot distinguish
-// which cast_op is inserted by new executor when we do profiling.
-REGISTER_OPERATOR(transfer_dtype,
-                  ops::CastOp,
-                  ops::CastOpGradMaker<paddle::framework::OpDesc>,
-                  ops::CastOpGradMaker<paddle::imperative::OpBase>,
                   ops::CastOpProtoMaker,
                   CastInferShapeFunctor);

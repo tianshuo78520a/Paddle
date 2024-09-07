@@ -18,7 +18,6 @@ import unittest
 import numpy as np
 from op import Operator
 from op_test import OpTest, convert_uint16_to_float
-from test_attribute_var import UnittestBase
 
 import paddle
 from paddle import base
@@ -203,6 +202,7 @@ class TestUniformRandomBF16Op(TestUniformRandomOp):
 
 
 class TestUniformRandomOpError(unittest.TestCase):
+    @test_with_pir_api
     def test_errors(self):
         paddle.enable_static()
         main_prog = Program()
@@ -230,7 +230,7 @@ class TestUniformRandomOpError(unittest.TestCase):
                 if paddle.framework.in_pir_mode():
                     self.assertEqual(out.dtype, base.core.DataType.FLOAT64)
                 else:
-                    self.assertEqual(out.dtype, base.core.VarDesc.VarType.FP64)
+                    self.assertEqual(out.dtype, paddle.float64)
 
             test_out_dtype()
         paddle.disable_static()
@@ -255,7 +255,13 @@ class TestUniformRandomOpWithDiagInit(TestUniformRandomOp):
 
 class TestUniformRandomOpSelectedRows(unittest.TestCase):
     def get_places(self):
-        places = [core.CPUPlace()]
+        places = []
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not core.is_compiled_with_cuda()
+        ):
+            places.append(core.CPUPlace())
         if core.is_compiled_with_cuda():
             places.append(core.CUDAPlace(0))
         return places
@@ -334,14 +340,12 @@ class TestUniformRandomOpApi(unittest.TestCase):
             y = linear(x)
 
             place = base.CPUPlace()
-            x_tensor = base.create_lod_tensor(
-                np.random.rand(3, 16).astype("float32"), [[1, 2]], place
-            )
+            x_data = np.random.rand(3, 16).astype("float32")
             exe = base.Executor(place)
             exe.run(paddle.static.default_startup_program())
             ret = exe.run(
                 paddle.static.default_main_program(),
-                feed={'x': x_tensor},
+                feed={'x': x_data},
                 fetch_list=[y],
                 return_numpy=False,
             )
@@ -439,7 +443,13 @@ class TestUniformRandomOp_API_seed(unittest.TestCase):
 
 class TestUniformRandomOpSelectedRowsShapeTensor(unittest.TestCase):
     def get_places(self):
-        places = [core.CPUPlace()]
+        places = []
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not core.is_compiled_with_cuda()
+        ):
+            places.append(core.CPUPlace())
         if core.is_compiled_with_cuda():
             places.append(core.CUDAPlace(0))
         return places
@@ -470,7 +480,13 @@ class TestUniformRandomOpSelectedRowsShapeTensor(unittest.TestCase):
 
 class TestUniformRandomOpSelectedRowsShapeTensorList(unittest.TestCase):
     def get_places(self):
-        places = [core.CPUPlace()]
+        places = []
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not core.is_compiled_with_cuda()
+        ):
+            places.append(core.CPUPlace())
         if core.is_compiled_with_cuda():
             places.append(core.CUDAPlace(0))
         return places
@@ -594,7 +610,7 @@ class TestUniformOpError(unittest.TestCase):
                 if paddle.framework.in_pir_mode():
                     self.assertEqual(out.dtype, base.core.DataType.FLOAT64)
                 else:
-                    self.assertEqual(out.dtype, base.core.VarDesc.VarType.FP64)
+                    self.assertEqual(out.dtype, paddle.float64)
 
             test_out_dtype()
         paddle.disable_static()
@@ -618,17 +634,17 @@ class TestUniformDtype(unittest.TestCase):
         def test_default_fp16():
             paddle.framework.set_default_dtype('float16')
             out = paddle.tensor.random.uniform([2, 3])
-            self.assertEqual(out.dtype, base.core.VarDesc.VarType.FP16)
+            self.assertEqual(out.dtype, paddle.float16)
 
         def test_default_fp32():
             paddle.framework.set_default_dtype('float32')
             out = paddle.tensor.random.uniform([2, 3])
-            self.assertEqual(out.dtype, base.core.VarDesc.VarType.FP32)
+            self.assertEqual(out.dtype, paddle.float32)
 
         def test_default_fp64():
             paddle.framework.set_default_dtype('float64')
             out = paddle.tensor.random.uniform([2, 3])
-            self.assertEqual(out.dtype, base.core.VarDesc.VarType.FP64)
+            self.assertEqual(out.dtype, paddle.float64)
 
         def test_dygraph_fp16():
             if not paddle.is_compiled_with_cuda():
@@ -636,7 +652,7 @@ class TestUniformDtype(unittest.TestCase):
                 return
             paddle.set_device('gpu')
             out = paddle.uniform([2, 3], dtype=paddle.float16)
-            self.assertEqual(out.dtype, base.core.VarDesc.VarType.FP16)
+            self.assertEqual(out.dtype, paddle.float16)
 
         if paddle.is_compiled_with_cuda():
             paddle.set_device('gpu')
@@ -730,47 +746,6 @@ class TestRandomValue(unittest.TestCase):
         np.testing.assert_allclose(out[10, 10, 10, 0:10], expect, rtol=1e-05)
 
         paddle.enable_static()
-
-
-class TestUniformMinMaxTensor(UnittestBase):
-    def init_info(self):
-        self.shapes = [[2, 3, 4]]
-        self.save_path = os.path.join(self.temp_dir.name, self.path_prefix())
-
-    def test_static(self):
-        main_prog = Program()
-        starup_prog = Program()
-        with program_guard(main_prog, starup_prog):
-            fc = paddle.nn.Linear(4, 10)
-            x = paddle.randn([2, 3, 4])
-            x.stop_gradient = False
-            feat = fc(x)  # [2,3,10]
-            min_v = paddle.to_tensor([0.1])
-            max_v = paddle.to_tensor([0.9])
-            y = paddle.uniform([2, 3, 10], min=min_v, max=max_v)
-            z = paddle.uniform([2, 3, 10], min=min_v, max=max_v)
-
-            out = feat + y + z
-
-            sgd = paddle.optimizer.SGD()
-            sgd.minimize(paddle.mean(out))
-            self.assertTrue(self.var_prefix() in str(main_prog))
-
-            exe = paddle.static.Executor()
-            exe.run(starup_prog)
-            res = exe.run(fetch_list=[out])
-            np.testing.assert_array_equal(res[0].shape, [2, 3, 10])
-
-            paddle.static.save_inference_model(self.save_path, [x], [out], exe)
-            # Test for Inference Predictor
-            infer_out = self.infer_prog()
-            np.testing.assert_array_equal(res[0].shape, [2, 3, 10])
-
-    def path_prefix(self):
-        return 'uniform_random'
-
-    def var_prefix(self):
-        return "Var["
 
 
 if __name__ == "__main__":

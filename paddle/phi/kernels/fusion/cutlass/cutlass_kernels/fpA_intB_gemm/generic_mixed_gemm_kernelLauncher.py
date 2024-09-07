@@ -33,6 +33,7 @@ void generic_mixed_gemm_kernelLauncher_template<{T},
                                                 {WeightType},
                                                 {arch},
                                                 {EpilogueTag},
+                                                {FineGrained},
                                                 {ThreadblockShape},
                                                 {WarpShape},
                                                 {Stages}>(
@@ -44,6 +45,7 @@ void generic_mixed_gemm_kernelLauncher_template<{T},
     int m,
     int n,
     int k,
+    int group_size,
     CutlassGemmConfig gemm_config,
     char* workspace,
     size_t workspace_bytes,
@@ -53,6 +55,7 @@ void generic_mixed_gemm_kernelLauncher_template<{T},
                                       {WeightType},
                                       {arch},
                                       {EpilogueTag},
+                                      {FineGrained},
                                       {ThreadblockShape},
                                       {WarpShape},
                                       {Stages}>(
@@ -64,6 +67,7 @@ void generic_mixed_gemm_kernelLauncher_template<{T},
         m,
         n,
         k,
+        group_size,
         gemm_config,
         workspace,
         workspace_bytes,
@@ -77,7 +81,7 @@ DefineHeader = """
 
 """
 
-DefaultArch = [70, 75, 80]
+DefaultArch = [70, 75, 80, 90]
 epilogue_tags = ["bias", "biasFtGelu", "biasReLU", "noBias"]
 
 WeightTypes = ["uint8_t", "cutlass::uint4b_t"]
@@ -87,10 +91,12 @@ ThreadblockShapes = [
     "cutlass::gemm::GemmShape<64, 128, 64>",
     "cutlass::gemm::GemmShape<128, 128, 64>",
     "cutlass::gemm::GemmShape<128, 256, 64>",
+    "cutlass::gemm::GemmShape<256, 128, 64>",
 ]
 WarpShapes = [
     "cutlass::gemm::GemmShape<16, 32, 64>",
     "cutlass::gemm::GemmShape<32, 32, 64>",
+    "cutlass::gemm::GemmShape<64, 64, 64>",
     "cutlass::gemm::GemmShape<64, 64, 64>",
     "cutlass::gemm::GemmShape<64, 64, 64>",
     "cutlass::gemm::GemmShape<64, 64, 64>",
@@ -104,13 +110,14 @@ WarpShapes_sm70 = [
     "cutlass::gemm::GemmShape<32, 32, 64>",
     "cutlass::gemm::GemmShape<64, 64, 64>",
 ]
-StagesList = {70: [2], 75: [2], 80: [2, 3, 4, 5]}
+StagesList = {70: [2], 75: [2], 80: [2, 3, 4, 5], 90: [2, 3, 4, 5]}
 
 ElementTypes = {"fp16": "half", "bf16": "__nv_bfloat16"}
 Archs = {
     70: "cutlass::arch::Sm70",
     75: "cutlass::arch::Sm75",
     80: "cutlass::arch::Sm80",
+    90: "cutlass::arch::Sm80",
 }
 EpilogueTags = {
     "bias": "EpilogueOpBias",
@@ -119,6 +126,9 @@ EpilogueTags = {
     # "biasReLU": "EpilogueOpBiasReLU",
 }
 
+FineGrainedTypes = ["true", "false"]
+FineGrainedTypes_sm70 = ["false"]
+
 
 def SubstituteTemplate(template, values):
     text = template
@@ -126,7 +136,7 @@ def SubstituteTemplate(template, values):
     while changed:
         changed = False
         for key, value in values.items():
-            regex = "\\{%s\\}" % key
+            regex = f"\\{{{key}\\}}"
             newtext = re.sub(regex, value, text)
             if newtext != text:
                 changed = True
@@ -143,6 +153,8 @@ def find_arch_range(archs):
             compile_archs.append(75)
         elif arch >= 80 and arch < 90:
             compile_archs.append(80)
+        elif arch >= 90 and arch < 91:
+            compile_archs.append(90)
     compile_archs = list(set(compile_archs))
     compile_archs.sort()
     return compile_archs
@@ -174,28 +186,36 @@ def parse_args():
 
 # generate source cu
 def generate_source_cu(
-    element_type: str, arch: int, epilogue_tag: str, stages: int
+    element_type: str,
+    arch: int,
+    epilogue_tag: str,
+    stages: int,
 ):
     all_code = CommonHead
     ThreadblockShapes_arch = ThreadblockShapes
     WarpShapes_arch = WarpShapes
+    FineGrainedTypes_arch = FineGrainedTypes
+
     if arch < 80:
         ThreadblockShapes_arch = ThreadblockShapes_sm70
         WarpShapes_arch = WarpShapes_sm70
+        FineGrainedTypes_arch = FineGrainedTypes_sm70
     for WeightType in WeightTypes:
         for i in range(len(ThreadblockShapes_arch)):
-            value_dict = {
-                "T": ElementTypes[element_type],
-                "WeightType": WeightType,
-                "arch": Archs[arch],
-                "EpilogueTag": EpilogueTags[epilogue_tag],
-                "ThreadblockShape": ThreadblockShapes_arch[i],
-                "WarpShape": WarpShapes_arch[i],
-                "Stages": str(stages),
-            }
-            all_code += SubstituteTemplate(
-                DispatchGemmConfigInstanceDeclare, value_dict
-            )
+            for j in range(len(FineGrainedTypes_arch)):
+                value_dict = {
+                    "T": ElementTypes[element_type],
+                    "WeightType": WeightType,
+                    "arch": Archs[arch],
+                    "EpilogueTag": EpilogueTags[epilogue_tag],
+                    "FineGrained": FineGrainedTypes_arch[j],
+                    "ThreadblockShape": ThreadblockShapes_arch[i],
+                    "WarpShape": WarpShapes_arch[i],
+                    "Stages": str(stages),
+                }
+                all_code += SubstituteTemplate(
+                    DispatchGemmConfigInstanceDeclare, value_dict
+                )
     all_code += CommonTail
     return all_code
 
@@ -207,7 +227,7 @@ if __name__ == "__main__":
     header_name = "autogen_tmp/arch_define.h"
     if archs:
         for arch in archs:
-            define_line = "#define USE_FPAINTB_GEMM_WITH_SM%s\n" % str(arch)
+            define_line = f"#define USE_FPAINTB_GEMM_WITH_SM{arch}\n"
             header_all += define_line
     with open(header_name, "w") as f:
         f.write(header_all)
@@ -215,13 +235,16 @@ if __name__ == "__main__":
     if archs:
         for element_type in ElementTypes.keys():
             for arch in archs:
+                if arch == 90 and 80 in archs:
+                    continue
                 for epilogue_tag in EpilogueTags.keys():
                     for stages in StagesList[arch]:
-                        file_name = "autogen_tmp/generic_mixed_gemm_kernelLauncher_{}_sm{}_stages{}_{}.cu".format(
-                            element_type, arch, stages, epilogue_tag
-                        )
+                        file_name = f"autogen_tmp/generic_mixed_gemm_kernelLauncher_{element_type}_sm{arch}_stages{stages}_{epilogue_tag}.cu"
                         all_code = generate_source_cu(
-                            element_type, arch, epilogue_tag, stages
+                            element_type,
+                            arch,
+                            epilogue_tag,
+                            stages,
                         )
                         with open(file_name, "w") as f:
                             f.write(all_code)

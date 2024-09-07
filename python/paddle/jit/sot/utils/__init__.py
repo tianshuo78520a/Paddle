@@ -12,50 +12,61 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .call_ast_utils import get_static_function, try_ast_func  # noqa: F401
 from .envs import (  # noqa: F401
     ENV_CLEAN_CODE,
     ENV_COST_MODEL,
     ENV_MIN_GRAPH_SIZE,
-    ENV_SHOW_TRACKERS,
+    ENV_SOT_ALLOW_DYNAMIC_SHAPE,
+    ENV_SOT_EXPORT,
     ENV_SOT_LOG_LEVEL,
+    ENV_SOT_WITH_CONTROL_FLOW,
     ENV_STRICT_MODE,
     cost_model_guard,
     min_graph_size_guard,
+    sot_step_profiler_guard,
     strict_mode_guard,
+    with_allow_dynamic_shape_guard,
+    with_control_flow_guard,
+    with_export_guard,
 )
 from .exceptions import (  # noqa: F401
     BreakGraphError,
+    ExportError,
     FallbackError,
     InnerError,
     inner_error_default_handler,
 )
 from .magic_methods import magic_method_builtin_dispatch  # noqa: F401
 from .paddle_api_config import (  # noqa: F401
+    get_tensor_methods,
     is_break_graph_tensor_methods,
     is_inplace_api,
     is_not_supported_paddle_layer,
-    paddle_tensor_methods,
 )
 from .utils import (  # noqa: F401
     Cache,
+    ConstTypes,
     GraphLogger,
     NameGenerator,
-    OrderedSet,
     ResumeFnNameFactory,
     Singleton,
     SotUndefinedVar,
     StepInfoManager,
     StepState,
     count_if,
-    current_tmp_name_records,
+    current_symbol_registry,
     execute_time,
+    flatten,
     flatten_extend,
+    get_api_fullname,
     get_unbound_method,
     hashable,
     in_paddle_module,
     is_break_graph_api,
     is_builtin_fn,
     is_clean_code,
+    is_comprehensive_name,
     is_paddle_api,
     is_strict_mode,
     list_contain_by_id,
@@ -67,5 +78,6 @@ from .utils import (  # noqa: F401
     map_if_extend,
     meta_str,
     no_eval_frame,
-    tmp_name_guard,
+    printable,
+    switch_symbol_registry,
 )

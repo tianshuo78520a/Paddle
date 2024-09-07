@@ -14,10 +14,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any, Callable
+
 from ..utils import log
 from .compile_cache import CompileSIRCache
 from .statement_ir import (
     ApiStatement,
+    ASTStatement,
     CallStatement,
     LayerStatement,
     MethodStatement,
@@ -25,6 +28,9 @@ from .statement_ir import (
     StatementIRFactory,
     Symbol,
 )
+
+if TYPE_CHECKING:
+    from paddle.static import InputSpec
 
 
 class SymbolicTraceContext:
@@ -69,7 +75,6 @@ class SymbolicTraceContext:
         """
         Call a paddle api.
         """
-
         assert callable(api), "call_API must receive a paddle api."
         stmt = ApiStatement(api, inputs, outputs, stacks)
         self.TOS.add_statement(stmt)
@@ -83,7 +88,7 @@ class SymbolicTraceContext:
         ), "call_METHOD must method api name. string."
         assert isinstance(
             inputs[0][0], Symbol
-        ), "call_METHOD must first augument must be Symbol Variable."
+        ), "call_METHOD first argument must be Symbol Variable."
         stmt = MethodStatement(method_name, inputs, outputs, stacks)
         self.TOS.add_statement(stmt)
 
@@ -92,6 +97,10 @@ class SymbolicTraceContext:
         Call a layer of a api.
         """
         stmt = LayerStatement(layer, inputs, outputs, stacks)
+        self.TOS.add_statement(stmt)
+
+    def call_AST(self, static_function, inputs, outputs, stacks):
+        stmt = ASTStatement(static_function, inputs, outputs, stacks)
         self.TOS.add_statement(stmt)
 
     def get_sir(self, name: str):
@@ -116,13 +125,21 @@ class SymbolicTraceContext:
     def replace_TOS(self, sir):
         """
         Use deepcopyed sir to replace the TOS.
-        This function will update statment_factory.
+        This function will update statement_factory.
         """
         self.sir_stack.pop()
         self.sir_stack.append(sir)
         self.statement_factory.update(sir)
 
-    def compile_do_nothing(self, ret_vals):
+    def return_TOS(self, ret_vals):
+        cur_sir: StatementIR = self.TOS
+        cur_sir.inputs = cur_sir.analyse_inputs()
+        cur_sir.outputs = ret_vals
+        log(2, "start subgraph compile and execution.\n")
+        log(2, self.TOS, "\n")
+        return cur_sir
+
+    def compile_do_nothing(self) -> Callable[[...], Any]:
         """
         Return a dummy function, which will return an empty list.
 
@@ -130,32 +147,19 @@ class SymbolicTraceContext:
             ret_vals (list[Symbol]): the return values of the function.
         """
 
-        def dummy_func(*args, **kwargs):
-            return []
+        class DummyFunc:
+            def __call__(*args, **kwargs):
+                return []
 
-        # return None function
-        dummy_stmt_ir = StatementIR("dummy_func")
-        dummy_stmt_ir.outputs = []
-        dummy_stmt_ir.inputs = []
-        return dummy_func, dummy_stmt_ir
+            def graph_size(self):
+                return 0
 
-    def compile_fn(self, ret_vals, **kwargs):
+        return DummyFunc()
+
+    def compile_fn(self, sir_name: str, input_spec: list[InputSpec], **kwargs):
         """
         start compile and return the python function, which must can be to_static without errors.
         """
-        cur_sir: StatementIR = self.TOS
-        # step0: if no statement, return a dummy function
-        if len(cur_sir.statements) == 0:
-            return self.compile_do_nothing(ret_vals)
-        # step1: analyse sir inputs and outputs
-        cur_sir.inputs = cur_sir.analyse_inputs()
-        # TODO: output analysis
-        cur_sir.outputs = ret_vals
-        log(2, "start subgraph compile and execution.\n")
-        log(2, self.TOS, "\n")
-        # step2: call compile_sir and get python function, third cache is triggered here.
-        static_func = CompileSIRCache()(self, cur_sir.name, **kwargs)
-        # step3: GC and reset TOS
-        # self.reset_TOS()
+        static_func = CompileSIRCache()(self, sir_name, input_spec, **kwargs)
 
-        return static_func, cur_sir
+        return static_func

@@ -63,15 +63,15 @@ def pool3D_forward_naive(
         padding_algorithm = padding_algorithm.upper()
         if padding_algorithm not in ["SAME", "VALID", "EXPLICIT"]:
             raise ValueError(
-                "Unknown Attr(padding_algorithm): '%s'. "
-                "It can only be 'SAME' or 'VALID'." % str(padding_algorithm)
+                f"Unknown Attr(padding_algorithm): '{padding_algorithm}'. "
+                "It can only be 'SAME' or 'VALID'."
             )
 
         if padding_algorithm == "VALID":
             paddings = [0, 0, 0, 0, 0, 0]
             if ceil_mode is not False:
                 raise ValueError(
-                    "When Attr(pool_padding) is \"VALID\", Attr(ceil_mode)"
+                    'When Attr(pool_padding) is "VALID", Attr(ceil_mode)'
                     " must be False. "
                     "Received ceil_mode: True."
                 )
@@ -578,7 +578,7 @@ def create_test_cudnn_bf16_class(parent):
     @unittest.skipIf(
         not core.is_compiled_with_cuda()
         or not core.is_bfloat16_supported(core.CUDAPlace(0)),
-        "core is not complied with CUDA and not support the bfloat16",
+        "core is not compiled with CUDA and not support the bfloat16",
     )
     class TestCUDNNBf16Case(parent):
         def init_kernel_type(self):
@@ -598,7 +598,7 @@ def create_test_bf16_class(parent):
     @unittest.skipIf(
         not core.is_compiled_with_cuda()
         or not core.is_bfloat16_supported(core.CUDAPlace(0)),
-        "core is not complied with CUDA and not support the bfloat16",
+        "core is not compiled with CUDA and not support the bfloat16",
     )
     class TestBf16Case(parent):
         def init_kernel_type(self):

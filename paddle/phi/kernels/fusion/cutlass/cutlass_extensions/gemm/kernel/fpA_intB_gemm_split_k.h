@@ -847,7 +847,7 @@ struct GemmFpAIntBSplitK {
     // static_assert(print_type<Mma::>());
 
     // Perform this tile's range of multiply-accumulate (MAC) iterations
-    Mma mma(shared_storage.main_loop, thread_idx, warp_idx, lane_idx);
+    Mma mma(shared_storage.main_loop, -1, thread_idx, warp_idx, lane_idx);
 
     mma(tile_work.k_iters_remaining,
         accumulator_tile,
@@ -1031,7 +1031,7 @@ struct GemmFpAIntBSplitK {
     gemm();
 #elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 750) && (__CUDA_ARCH__ < 800)
     gemm();
-#elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800) && (__CUDA_ARCH__ < 900)
+#elif defined(__CUDA_ARCH__) && (__CUDA_ARCH__ >= 800) && (__CUDA_ARCH__ < 910)
     gemm();
 #else
     CUTLASS_NOT_IMPLEMENTED();

@@ -20,8 +20,8 @@
 #include "paddle/cinn/adt/map_expr.h"
 #include "paddle/cinn/ir/lowered_func.h"
 #include "paddle/cinn/ir/utils/ir_copy.h"
-#include "paddle/pir/core/operation.h"
-#include "paddle/pir/dialect/shape/ir/shape_op.h"
+#include "paddle/pir/include/core/operation.h"
+#include "paddle/pir/include/dialect/shape/ir/shape_op.h"
 
 namespace cinn::adt {
 
@@ -33,13 +33,7 @@ class MapExprCtx final {
   MapExprCtx(const MapExprCtx&) = delete;
   MapExprCtx(MapExprCtx&&) = delete;
 
-  explicit MapExprCtx(
-      const MapExpr& map_expr,
-      const std::unordered_map<SymbolicDim, ::pir::shape::SymbolicDimOp>&
-          map_expr_symbolic2dialect_symbolic)
-      : map_expr_(map_expr),
-        map_expr_symbolic2dialect_symbolic_(
-            map_expr_symbolic2dialect_symbolic) {}
+  explicit MapExprCtx(const MapExpr& map_expr) : map_expr_(map_expr) {}
 
   const MapExpr& map_expr() const { return map_expr_; }
 
@@ -47,23 +41,21 @@ class MapExprCtx final {
       ::pir::Operation* node,
       const std::vector<ir::LoweredFunc>& lowered_funcs) {
     Node2LoweredFuncs* map = &node2lowered_funcs_;
-    CHECK(map->emplace(node, ir::ir_utils::IRCopy(lowered_funcs)).second);
+    PADDLE_ENFORCE_EQ(
+        map->emplace(node, ir::ir_utils::IRCopy(lowered_funcs)).second,
+        true,
+        ::common::errors::InvalidArgument(
+            "Failed to emplace the node in the map. Ensure that the node is "
+            "valid and the operation is correct."));
   }
 
   const Node2LoweredFuncs& node2lowered_funcs() const {
     return node2lowered_funcs_;
   }
 
-  const std::unordered_map<SymbolicDim, ::pir::shape::SymbolicDimOp>&
-  map_expr_symbolic2dialect_symbolic() const {
-    return map_expr_symbolic2dialect_symbolic_;
-  }
-
  private:
   const MapExpr map_expr_;
   Node2LoweredFuncs node2lowered_funcs_;
-  std::unordered_map<SymbolicDim, ::pir::shape::SymbolicDimOp>
-      map_expr_symbolic2dialect_symbolic_;
 };
 
 }  // namespace cinn::adt

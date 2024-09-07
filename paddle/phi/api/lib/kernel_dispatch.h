@@ -43,8 +43,8 @@ std::size_t CountLeadingZeros(uint32_t val);
 phi::DeviceContext* GetDeviceContextByBackend(phi::Backend backend);
 
 enum class KernelType {
-  DENSE_TENSOR_KENREL,   // kernel for DenseTensor
-  SELECTED_ROWS_KENREL,  // kernel for SelectedRows
+  DENSE_TENSOR_KERNEL,   // kernel for DenseTensor
+  SELECTED_ROWS_KERNEL,  // kernel for SelectedRows
   SPARSE_COO_KERNEL,     // kernel for SparseCooTensor
   SPARSE_CSR_KERNEL      // kernel for SparseCsrTensor
 };
@@ -55,7 +55,7 @@ struct KernelKeySet {
   phi::DataLayout layout{phi::DataLayout::UNDEFINED};
   DataType dtype{DataType::UNDEFINED};
 
-  // TODO(chenweihang): iterate all kernelkey for kernel selection
+  // TODO(chenweihang): iterate all kernel key for kernel selection
   phi::KernelKey GetHighestPriorityKernelKey() {
     return phi::KernelKey(static_cast<Backend>(32 - detail::CountLeadingZeros(
                                                         backend_set.bitset())),
@@ -99,7 +99,6 @@ struct KernelKeyParser : ArgsIterator<KernelKeyParser> {
   inline void AssignKernelKeySet(const phi::TensorBase& tensor) {
     // assign Backend
     BackendSet tensor_backend_set = detail::GetTensorBackendSet(tensor);
-    VLOG(8) << "Get BackendSet from tensor";
     key_set.backend_set = key_set.backend_set | tensor_backend_set;
     // tensor's attribute use_gpudnn=False, explicitly disable gpudnn kernel
     if (tensor_backend_set == BackendSet(Backend::GPU) || disable_gpudnn) {
@@ -150,13 +149,13 @@ struct KernelKeyParser : ArgsIterator<KernelKeyParser> {
 };
 
 struct KernelTypeParser : ArgsIterator<KernelTypeParser> {
-  KernelType kernel_type{KernelType::DENSE_TENSOR_KENREL};
+  KernelType kernel_type{KernelType::DENSE_TENSOR_KERNEL};
 
   // TODO(chenweihang): deal with multiple diff input Tensors
   // TODO(chenweihang): add global device guard method to set backend
   void operator()(const Tensor& x) {
     if (phi::SelectedRows::classof(x.impl().get())) {
-      kernel_type = KernelType::SELECTED_ROWS_KENREL;
+      kernel_type = KernelType::SELECTED_ROWS_KERNEL;
     } else if (phi::SparseCooTensor::classof(x.impl().get())) {
       kernel_type = KernelType::SPARSE_COO_KERNEL;
     } else if (phi::SparseCsrTensor::classof(x.impl().get())) {

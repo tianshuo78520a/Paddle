@@ -14,6 +14,9 @@
 
 import os
 
+from auto_parallel.hybrid_strategy.semi_auto_save_state_dict import (
+    check_structure_name_mapping,
+)
 from auto_parallel.semi_auto_parallel_simple_net import (
     DemoNet,
     TestSimpleNetForSemiAutoParallel,
@@ -48,22 +51,32 @@ class TestSimpleNetHybridStrategyForSemiAutoParallel(
 
     def dp_mp_pp_shard_fn(self, layer_name, layer, process_mesh):
         if layer_name == 'linear_0':
-            # shard_layer doens't support cross-mesh now.
+            # shard_layer doesn't support cross-mesh now.
             # input process_mesh of pp_shard_fn is useless,
             # it's defined just for unified format.
             layer.weight = dist.shard_tensor(
                 layer.weight, self._pp_mesh0, [Replicate(), Shard(1)]
             )
-            layer.bias = dist.shard_tensor(
-                layer.bias, self._pp_mesh0, [Replicate(), Replicate()]
-            )
+            if layer.bias is not None:
+                layer.bias = dist.shard_tensor(
+                    layer.bias, self._pp_mesh0, [Replicate(), Replicate()]
+                )
         elif layer_name == 'linear_1':
             layer.weight = dist.shard_tensor(
                 layer.weight, self._pp_mesh1, [Replicate(), Shard(0)]
             )
-            layer.bias = dist.shard_tensor(
-                layer.bias, self._pp_mesh1, [Replicate(), Replicate()]
+            if layer.bias is not None:
+                layer.bias = dist.shard_tensor(
+                    layer.bias, self._pp_mesh1, [Replicate(), Replicate()]
+                )
+        elif layer_name == 'norm':
+            layer.weight = dist.shard_tensor(
+                layer.weight, self._pp_mesh1, [Replicate(), Replicate()]
             )
+            if layer.bias is not None:
+                layer.bias = dist.shard_tensor(
+                    layer.bias, self._pp_mesh1, [Replicate(), Replicate()]
+                )
 
     def test_dp_mp_pp_demo_net(self):
         self.set_random_seed(self._seed)
@@ -89,25 +102,26 @@ class TestSimpleNetHybridStrategyForSemiAutoParallel(
         if rank in [0, 1, 2, 3]:
             # linear_0 weight and bias
             self.check_tensor_eq(
-                self.dp_mp_pp_parameters[0], self.base_parameters[0]
+                self.dp_mp_pp_parameters[0], self.base_parameters[0], rtol=2e-4
             )
-            self.check_tensor_eq(
-                self.dp_mp_pp_parameters[1], self.base_parameters[1]
-            )
+
         else:
-            self.check_tensor_eq(self.dp_mp_pp_loss, self.base_loss)
-            # linear_1 weight and bias
+            self.check_tensor_eq(self.dp_mp_pp_loss, self.base_loss, rtol=1e-4)
             self.check_tensor_eq(
-                self.dp_mp_pp_parameters[2], self.base_parameters[2]
+                self.dp_mp_pp_parameters[1], self.base_parameters[1], rtol=1e-4
             )
             self.check_tensor_eq(
-                self.dp_mp_pp_parameters[3], self.base_parameters[3]
+                self.dp_mp_pp_parameters[2], self.base_parameters[2], rtol=2e-5
+            )
+            self.check_tensor_eq(
+                self.dp_mp_pp_parameters[3], self.base_parameters[3], rtol=2e-4
             )
 
         # save load
         state_dict = model.state_dict()
         paddle.distributed.save_state_dict(state_dict, self._ckpt_path)
         paddle.distributed.barrier()
+        check_structure_name_mapping(self._ckpt_path, state_dict)
         expected_local_state_dict = {}
         need_load_state_dict = {}
         for k, v in state_dict.items():

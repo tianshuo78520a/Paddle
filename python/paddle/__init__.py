@@ -11,12 +11,19 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+import typing
+
+__is_metainfo_generated = False
 try:
     from paddle.cuda_env import *  # noqa: F403
     from paddle.version import (  # noqa: F401
         commit as __git_commit__,
         full_version as __version__,
     )
+
+    __is_metainfo_generated = True
+
 except ImportError:
     import sys
 
@@ -34,12 +41,13 @@ from .batch import batch
 # We need remove the duplicated code here once we fix
 # the illogical implement in the monkey-patch methods later.
 from .framework import monkey_patch_math_tensor, monkey_patch_variable
-from .pir import monkey_patch_program, monkey_patch_value
+from .pir import monkey_patch_dtype, monkey_patch_program, monkey_patch_value
 
 monkey_patch_variable()
 monkey_patch_math_tensor()
 monkey_patch_value()
 monkey_patch_program()
+monkey_patch_dtype()
 
 from .base.dataset import *  # noqa: F403
 from .framework import (
@@ -57,6 +65,8 @@ from .framework.dtype import (
     complex128,
     dtype,
     finfo,
+    float8_e4m3fn,
+    float8_e5m2,
     float16,
     float32,
     float64,
@@ -68,12 +78,15 @@ from .framework.dtype import (
     uint8,
 )
 
-Tensor = framework.core.eager.Tensor
-Tensor.__qualname__ = 'Tensor'
+if typing.TYPE_CHECKING:
+    from .tensor.tensor import Tensor
+else:
+    Tensor = framework.core.eager.Tensor
+    Tensor.__qualname__ = 'Tensor'
 
-import paddle.distributed.fleet  # noqa: F401
-import paddle.text  # noqa: F401
-import paddle.vision  # noqa: F401
+import paddle.distributed.fleet
+import paddle.text
+import paddle.vision
 from paddle import (  # noqa: F401
     amp,
     audio,
@@ -104,6 +117,7 @@ from paddle import (  # noqa: F401
 # high-level api
 from . import (  # noqa: F401
     _pir_ops,
+    _typing as _typing,
     callbacks,
     fft,
     hub,
@@ -130,7 +144,7 @@ from .device import (  # noqa: F401
     set_device,
 )
 from .distributed import DataParallel
-from .framework import (  # noqa: F401  # noqa: F401
+from .framework import (  # noqa: F401
     CPUPlace,
     CUDAPinnedPlace,
     CUDAPlace,
@@ -157,7 +171,7 @@ from .hapi import (
     flops,
     summary,
 )
-from .nn.functional.distance import (  # noqa: F401
+from .nn.functional.distance import (
     pdist,
 )
 from .nn.initializer.lazy_init import LazyGuard
@@ -213,6 +227,7 @@ from .tensor.linalg import (  # noqa: F401
     dot,
     eigvalsh,
     histogram,
+    histogram_bin_edges,
     histogramdd,
     matmul,
     mv,
@@ -222,7 +237,7 @@ from .tensor.linalg import (  # noqa: F401
     transpose,
     transpose_,
 )
-from .tensor.logic import (  # noqa: F401
+from .tensor.logic import (
     allclose,
     bitwise_and,
     bitwise_and_,
@@ -253,17 +268,18 @@ from .tensor.logic import (  # noqa: F401
     logical_or,
     logical_or_,
     logical_xor,
-    logical_xor_,
+    logical_xor_,  # noqa: F401
     not_equal,
-    not_equal_,
+    not_equal_,  # noqa: F401
 )
-from .tensor.manipulation import (  # noqa: F401
+from .tensor.manipulation import (
     as_complex,
     as_real,
     as_strided,
     atleast_1d,
     atleast_2d,
     atleast_3d,
+    block_diag,
     broadcast_tensors,
     broadcast_to,
     cast,
@@ -278,6 +294,7 @@ from .tensor.manipulation import (  # noqa: F401
     expand,
     expand_as,
     flatten,
+    flatten_,
     flip,
     flip as reverse,
     gather,
@@ -309,6 +326,7 @@ from .tensor.manipulation import (  # noqa: F401
     select_scatter,
     shard_index,
     slice,
+    slice_scatter,
     split,
     squeeze,
     squeeze_,
@@ -357,11 +375,18 @@ from .tensor.math import (  # noqa: F401
     atan_,
     atanh,
     atanh_,
+    bitwise_left_shift,
+    bitwise_left_shift_,
+    bitwise_right_shift,
+    bitwise_right_shift_,
     broadcast_shape,
+    cartesian_prod,
     ceil,
     clip,
     combinations,
     conj,
+    copysign,
+    copysign_,
     cos,
     cos_,
     cosh,
@@ -397,6 +422,12 @@ from .tensor.math import (  # noqa: F401
     frac,
     frac_,
     frexp,
+    gammainc,
+    gammainc_,
+    gammaincc,
+    gammaincc_,
+    gammaln,
+    gammaln_,
     gcd,
     gcd_,
     heaviside,
@@ -411,8 +442,12 @@ from .tensor.math import (  # noqa: F401
     inner,
     inverse,
     isfinite,
+    isin,
     isinf,
     isnan,
+    isneginf,
+    isposinf,
+    isreal,
     kron,
     lcm,
     lcm_,
@@ -461,6 +496,7 @@ from .tensor.math import (  # noqa: F401
     prod,
     rad2deg,
     reciprocal,
+    reduce_as,
     remainder,
     remainder_,
     renorm,
@@ -473,6 +509,8 @@ from .tensor.math import (  # noqa: F401
     signbit,
     sin,
     sin_,
+    sinc,
+    sinc_,
     sinh,
     sinh_,
     sqrt,
@@ -494,8 +532,11 @@ from .tensor.math import (  # noqa: F401
 )
 from .tensor.random import (
     bernoulli,
+    bernoulli_,
     binomial,
     check_shape,
+    log_normal,
+    log_normal_,
     multinomial,
     normal,
     normal_,
@@ -505,6 +546,7 @@ from .tensor.random import (
     randint_like,
     randn,
     randperm,
+    standard_gamma,
     standard_normal,
     uniform,
 )
@@ -547,6 +589,159 @@ if is_compiled_with_cinn():
     if os.path.exists(cuh_file):
         os.environ.setdefault('runtime_include_dir', runtime_include_dir)
 
+    import pkg_resources
+
+    data_file_path = pkg_resources.resource_filename('paddle.cinn_config', '')
+    os.environ['CINN_CONFIG_PATH'] = data_file_path
+
+if __is_metainfo_generated and is_compiled_with_cuda():
+    import os
+    import platform
+
+    if (
+        platform.system() == 'Linux'
+        and platform.machine() == 'x86_64'
+        and paddle.version.with_pip_cuda_libraries == 'ON'
+    ):
+        package_dir = os.path.dirname(os.path.abspath(__file__))
+        nvidia_package_path = package_dir + "/.." + "/nvidia"
+        set_flags({"FLAGS_nvidia_package_dir": nvidia_package_path})
+
+        cublas_lib_path = package_dir + "/.." + "/nvidia/cublas/lib"
+        set_flags({"FLAGS_cublas_dir": cublas_lib_path})
+
+        cudnn_lib_path = package_dir + "/.." + "/nvidia/cudnn/lib"
+        set_flags({"FLAGS_cudnn_dir": cudnn_lib_path})
+
+        curand_lib_path = package_dir + "/.." + "/nvidia/curand/lib"
+        set_flags({"FLAGS_curand_dir": curand_lib_path})
+
+        cusolver_lib_path = package_dir + "/.." + "/nvidia/cusolver/lib"
+        set_flags({"FLAGS_cusolver_dir": cusolver_lib_path})
+
+        cusparse_lib_path = package_dir + "/.." + "/nvidia/cusparse/lib"
+        set_flags({"FLAGS_cusparse_dir": cusparse_lib_path})
+
+        nccl_lib_path = package_dir + "/.." + "/nvidia/nccl/lib"
+        set_flags({"FLAGS_nccl_dir": nccl_lib_path})
+
+        cupti_dir_lib_path = package_dir + "/.." + "/nvidia/cuda_cupti/lib"
+        set_flags({"FLAGS_cupti_dir": cupti_dir_lib_path})
+
+    elif (
+        platform.system() == 'Windows'
+        and platform.machine() in ('x86_64', 'AMD64')
+        and paddle.version.with_pip_cuda_libraries == 'ON'
+    ):
+        package_dir = os.path.dirname(os.path.abspath(__file__))
+        win_cuda_bin_path = package_dir + "\\.." + "\\nvidia"
+        set_flags({"FLAGS_win_cuda_bin_dir": win_cuda_bin_path})
+
+        import sys
+
+        if sys.platform == 'win32':
+            pfiles_path = os.getenv('ProgramFiles', 'C:\\Program Files')
+            py_dll_path = os.path.join(sys.exec_prefix, 'Library', 'bin')
+            th_dll_path = os.path.join(os.path.dirname(__file__), 'libs')
+            site_cuda_base_path = os.path.join(
+                os.path.dirname(__file__), '..', 'nvidia'
+            )
+            site_cuda_list = [
+                "cublas",
+                "cuda_nvrtc",
+                "cuda_runtime",
+                "cudnn",
+                "cufft",
+                "curand",
+                "cusolver",
+                "cusparse",
+                "nvjitlink",
+            ]
+
+            if sys.exec_prefix != sys.base_exec_prefix:
+                base_py_dll_path = os.path.join(
+                    sys.base_exec_prefix, 'Library', 'bin'
+                )
+            else:
+                base_py_dll_path = ''
+
+            dll_paths = list(
+                filter(
+                    os.path.exists, [th_dll_path, py_dll_path, base_py_dll_path]
+                )
+            )
+            for site_cuda_package in site_cuda_list:
+                site_cuda_path = os.path.join(
+                    site_cuda_base_path, site_cuda_package, 'bin'
+                )
+                if os.path.exists(site_cuda_path):
+                    dll_paths.append(site_cuda_path)
+
+            import ctypes
+
+            kernel32 = ctypes.WinDLL('kernel32.dll', use_last_error=True)
+            with_load_library_flags = hasattr(kernel32, 'AddDllDirectory')
+            prev_error_mode = kernel32.SetErrorMode(0x0001)
+
+            kernel32.LoadLibraryW.restype = ctypes.c_void_p
+            if with_load_library_flags:
+                kernel32.LoadLibraryExW.restype = ctypes.c_void_p
+
+            for dll_path in dll_paths:
+                os.add_dll_directory(dll_path)
+
+            try:
+                ctypes.CDLL('vcruntime140.dll')
+                ctypes.CDLL('msvcp140.dll')
+                ctypes.CDLL('vcruntime140_1.dll')
+            except OSError:
+                import logging
+
+                logging.error(
+                    '''Microsoft Visual C++ Redistributable is not installed, this may lead to the DLL load failure.
+                        It can be downloaded at https://aka.ms/vs/16/release/vc_redist.x64.exe'''
+                )
+            import glob
+
+            dlls = glob.glob(os.path.join(th_dll_path, '*.dll'))
+            for site_cuda_package in site_cuda_list:
+                site_cuda_path = os.path.join(
+                    site_cuda_base_path, site_cuda_package, 'bin'
+                )
+                if os.path.exists(site_cuda_path):
+                    dlls.extend(
+                        glob.glob(os.path.join(site_cuda_path, '*.dll'))
+                    )
+            # Not load 32 bit dlls in 64 bit python.
+            dlls = [dll for dll in dlls if '32_' not in dll]
+            path_patched = False
+            for dll in dlls:
+                is_loaded = False
+                if with_load_library_flags:
+                    res = kernel32.LoadLibraryExW(dll, None, 0x00001100)
+                    last_error = ctypes.get_last_error()
+                    if res is None and last_error != 126:
+                        err = ctypes.WinError(last_error)
+                        err.strerror += f' Error loading "{dll}" or one of its dependencies.'
+                        raise err
+                    elif res is not None:
+                        is_loaded = True
+                if not is_loaded:
+                    if not path_patched:
+                        prev_path = os.environ['PATH']
+                        os.environ['PATH'] = ';'.join(
+                            [*dll_paths, os.environ['PATH']]
+                        )
+                        path_patched = True
+                    res = kernel32.LoadLibraryW(dll)
+                    if path_patched:
+                        os.environ['PATH'] = prev_path
+                    if res is None:
+                        err = ctypes.WinError(ctypes.get_last_error())
+                        err.strerror += f' Error loading "{dll}" or one of its dependencies.'
+                        raise err
+            kernel32.SetErrorMode(prev_error_mode)
+
 disable_static()
 
 from .pir_utils import IrGuard
@@ -555,6 +750,7 @@ ir_guard = IrGuard()
 ir_guard._switch_to_pir()
 
 __all__ = [
+    'block_diag',
     'iinfo',
     'finfo',
     'dtype',
@@ -563,6 +759,8 @@ __all__ = [
     'int16',
     'int32',
     'int64',
+    'float8_e4m3fn',
+    'float8_e5m2',
     'float16',
     'float32',
     'float64',
@@ -611,6 +809,7 @@ __all__ = [
     'is_tensor',
     'is_complex',
     'is_integer',
+    'cartesian_prod',
     'cross',
     'where',
     'where_',
@@ -627,8 +826,11 @@ __all__ = [
     'amin',
     'any',
     'slice',
+    'slice_scatter',
     'normal',
     'normal_',
+    'log_normal',
+    'log_normal_',
     'logsumexp',
     'full',
     'unsqueeze',
@@ -667,7 +869,11 @@ __all__ = [
     'squeeze_',
     'to_tensor',
     'gather_nd',
+    'isin',
     'isinf',
+    'isneginf',
+    'isposinf',
+    'isreal',
     'uniform',
     'floor_divide',
     'floor_divide_',
@@ -693,6 +899,7 @@ __all__ = [
     'flip',
     'rot90',
     'bincount',
+    'histogram_bin_edges',
     'histogram',
     'histogramdd',
     'multiplex',
@@ -749,10 +956,14 @@ __all__ = [
     'expm1',
     'expm1_',
     'bernoulli',
+    'bernoulli_',
     'binomial',
     'poisson',
+    'standard_gamma',
     'sinh',
     'sinh_',
+    'sinc',
+    'sinc_',
     'round',
     'DataParallel',
     'argmin',
@@ -763,6 +974,10 @@ __all__ = [
     'neg_',
     'lgamma',
     'lgamma_',
+    'gammaincc',
+    'gammaincc_',
+    'gammainc',
+    'gammainc_',
     'lerp',
     'erfinv',
     'inner',
@@ -771,6 +986,8 @@ __all__ = [
     'square_',
     'divide',
     'divide_',
+    'gammaln',
+    'gammaln_',
     'ceil',
     'atan',
     'atan_',
@@ -792,6 +1009,7 @@ __all__ = [
     'ones',
     'not_equal',
     'sum',
+    'reduce_as',
     'nansum',
     'nanmean',
     'count_nonzero',
@@ -827,6 +1045,7 @@ __all__ = [
     'set_printoptions',
     'std',
     'flatten',
+    'flatten_',
     'asin',
     'multiply',
     'multiply_',
@@ -936,6 +1155,12 @@ __all__ = [
     'i1e',
     'polygamma',
     'polygamma_',
+    'copysign',
+    'copysign_',
+    'bitwise_left_shift',
+    'bitwise_left_shift_',
+    'bitwise_right_shift',
+    'bitwise_right_shift_',
     'masked_fill',
     'masked_fill_',
     'masked_scatter',

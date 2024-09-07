@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import copy
 import warnings
-from sqlite3 import NotSupportedError
+from typing import TYPE_CHECKING
 
 import paddle
 import paddle.autograd as imperative_base
+import paddle.distributed as dist
 from paddle import _C_ops
 from paddle.base import core, framework, unique_name
 from paddle.base.data_feeder import check_variable_and_dtype
@@ -29,28 +32,39 @@ from paddle.framework import (
     in_dynamic_or_pir_mode,
     in_pir_mode,
 )
-from paddle.tensor.layer_function_generator import templatedoc
+
+if TYPE_CHECKING:
+    from paddle import Tensor
 
 __all__ = []
 
 
-@templatedoc()
 def clip_by_norm(x, max_norm, name=None):
-    """
-    ${comment}
+    r"""
+
+    Limits the L2 norm of the input :math:`x` within :math:`max\_norm`.
+    If the L2 norm of :math:`x` is less than or equal to :math:`max\_norm`, :math:`out` will be
+    the same as :math:`x`. If the L2 norm of :math:`x` is greater than :math:`max\_norm`, :math:`x` will
+    be linearly scaled to make the L2 norm of :math:`out` equal to :math:`max\_norm`, as
+    shown in the following formula:
+
+    .. math::
+
+        out = \frac{max\_norm * x}{norm(x)}
+
+    where :math:`norm(x)` represents the L2 norm of :math:`x`.
 
     Args:
-        x(${x_type}): ${x_comment}
-        max_norm(${max_norm_type}): ${max_norm_comment}
+        x(Tensor): The input of clip_by_norm and data type is float32.
+            The number of dimensions must be between [1, 9].
+        max_norm(float): The maximum norm value.
         name(str, optional): For detailed information, please refer
             to :ref:`api_guide_Name`. Usually name is no need to set and
             None by default.
 
     Returns:
-        Tensor:
-
-        out(${out_type}): ${out_comment}
-
+        Tensor: The output of clip_by_norm with shape as input.
+            The data type is float32.
 
     Examples:
 
@@ -67,7 +81,7 @@ def clip_by_norm(x, max_norm, name=None):
              [0.50000000, 0.50000000]])
     """
 
-    if in_dynamic_mode():
+    if in_dynamic_or_pir_mode():
         return _C_ops.clip_by_norm(x, max_norm)
 
     helper = LayerHelper("clip_by_norm", **locals())
@@ -95,17 +109,16 @@ def clip_by_norm(x, max_norm, name=None):
     return out
 
 
-@templatedoc()
 def merge_selected_rows(x, name=None):
     """
-    ${comment}
+    Merge by adding duplicated rows in the input SelectedRows object.
 
     Args:
-        x(${x_type}): ${x_comment}
+        x(Tensor): The input selected rows to be merge.
         name(basestring|None): Name of the output.
 
     Returns:
-        out(${out_type}): ${out_comment}
+        Tensor, merged output.
 
     Examples:
 
@@ -134,7 +147,6 @@ def merge_selected_rows(x, name=None):
     return out
 
 
-@templatedoc()
 def get_tensor_from_selected_rows(x, name=None):
     """
     Get tensor data from input with SelectedRows type, and outputs a Tensor.
@@ -252,10 +264,10 @@ def _squared_l2_norm(x):
 
 class BaseErrorClipAttr:
     def __str__(self):
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def _append_clip_op(self, block, grad_name):
-        raise NotImplementedError()
+        raise NotImplementedError
 
 
 class ErrorClipByValue(BaseErrorClipAttr):
@@ -340,7 +352,7 @@ class ClipGradBase:
         super().__init__()
 
     def __str__(self):
-        raise NotImplementedError()
+        raise NotImplementedError
 
     @imperative_base.no_grad()
     def _dygraph_clip(self, params_grads):
@@ -352,7 +364,9 @@ class ClipGradBase:
     def _static_clip(self, params_grads):
         raise NotImplementedError
 
-    def __call__(self, params_grads):
+    def __call__(
+        self, params_grads: list[tuple[Tensor, Tensor]]
+    ) -> list[tuple[Tensor, Tensor]]:
         if in_dynamic_mode():
             return self._dygraph_clip(params_grads)
         elif in_pir_mode():
@@ -369,10 +383,10 @@ class ClipGradBase:
             return self._static_clip(params_grads)
 
     def _process_context(self, context, param, grad):
-        raise NotImplementedError()
+        raise NotImplementedError
 
     def _create_operators(self, param, grad):
-        raise NotImplementedError()
+        raise NotImplementedError
 
 
 class ClipGradByValue(ClipGradBase):
@@ -391,7 +405,7 @@ class ClipGradByValue(ClipGradBase):
 
     Note:
         ``need_clip`` of ``ClipGradByValue`` HAS BEEN DEPRECATED since 2.0.
-        Please use ``need_clip`` in ``ParamAttr`` to speficiy the clip scope.
+        Please use ``need_clip`` in ``ParamAttr`` to specify the clip scope.
 
     Args:
         max (float): The maximum value to clip by.
@@ -415,7 +429,10 @@ class ClipGradByValue(ClipGradBase):
             >>> sdg.step()
     """
 
-    def __init__(self, max, min=None):
+    max: float
+    min: float
+
+    def __init__(self, max: float, min: float | None = None) -> None:
         super().__init__()
         if min is None:
             assert max > 0.0
@@ -423,7 +440,7 @@ class ClipGradByValue(ClipGradBase):
         self.max = float(max)
         self.min = float(min)
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"Clip Gradient By Value, min = {self.min:f}, max={self.max:f}"
 
     @imperative_base.no_grad()
@@ -498,7 +515,7 @@ class ClipGradByNorm(ClipGradBase):
 
     Note:
         ``need_clip`` of ``ClipGradByNorm`` HAS BEEN DEPRECATED since 2.0.
-        Please use ``need_clip`` in ``ParamAttr`` to speficiy the clip scope.
+        Please use ``need_clip`` in ``ParamAttr`` to specify the clip scope.
 
     Args:
         clip_norm(float): The maximum norm value.
@@ -520,15 +537,16 @@ class ClipGradByNorm(ClipGradBase):
             >>> sdg.step()
     """
 
-    def __init__(self, clip_norm):
+    clip_norm: float
+
+    def __init__(self, clip_norm: float) -> None:
         super().__init__()
         self.clip_norm = float(clip_norm)
 
-    def __str__(self):
-        return "Gradient Clip By Norm, clip_norm=%f" % self.clip_norm
+    def __str__(self) -> str:
+        return f"Gradient Clip By Norm, clip_norm={self.clip_norm:f}"
 
-    @imperative_base.no_grad()
-    def _dygraph_clip(self, params_grads):
+    def _clip_gradients(self, params_grads):
         params_and_grads = []
         for p, g in params_grads:
             if g is None:
@@ -539,6 +557,13 @@ class ClipGradByNorm(ClipGradBase):
             new_grad = clip_by_norm(x=g, max_norm=self.clip_norm)
             params_and_grads.append((p, new_grad))
         return params_and_grads
+
+    @imperative_base.no_grad()
+    def _dygraph_clip(self, params_grads):
+        return self._clip_gradients(params_grads)
+
+    def _pir_clip(self, params_grads):
+        return self._clip_gradients(params_grads)
 
     def _static_clip(self, params_grads):
         params_and_grads = []
@@ -623,7 +648,7 @@ class ClipGradByGlobalNorm(ClipGradBase):
 
     Note:
         ``need_clip`` of ``ClipGradyGlobalNorm`` HAS BEEN DEPRECATED since 2.0.
-        Please use ``need_clip`` in ``ParamAttr`` to speficiy the clip scope.
+        Please use ``need_clip`` in ``ParamAttr`` to specify the clip scope.
 
     Args:
         clip_norm (float): The maximum norm value.
@@ -647,9 +672,16 @@ class ClipGradByGlobalNorm(ClipGradBase):
             >>> sdg.step()
     """
 
+    clip_norm: float
+    group_name: str
+    auto_skip_clip: bool
+
     def __init__(
-        self, clip_norm, group_name="default_group", auto_skip_clip=False
-    ):
+        self,
+        clip_norm: float,
+        group_name: str = "default_group",
+        auto_skip_clip: bool = False,
+    ) -> None:
         super().__init__()
         self.clip_norm = float(clip_norm)
         self.group_name = group_name
@@ -661,11 +693,9 @@ class ClipGradByGlobalNorm(ClipGradBase):
         # are so many hard code depends on `add_n` in the legacy static
         # manual hybrid-parallel.
         self._async_add_n = None
-        # just for auto parallel.
-        self._pp_mesh = None
 
-    def __str__(self):
-        return "Gradient Clip By GlobalNorm, global_norm=%f" % (self.clip_norm)
+    def __str__(self) -> str:
+        return f"Gradient Clip By GlobalNorm, global_norm={self.clip_norm:f}"
 
     @imperative_base.no_grad()
     def _dygraph_clip(self, params_grads):
@@ -673,6 +703,11 @@ class ClipGradByGlobalNorm(ClipGradBase):
         sum_square_list = []
         sum_square_list_fp16 = []
         sum_square_list_fp32 = []
+        if len(params_grads) > 0 and len(params_grads[0]) > 0:
+            src_mesh = params_grads[0][0].process_mesh
+        else:
+            src_mesh = None
+
         for p, g in params_grads:
             if g is None:
                 continue
@@ -689,12 +724,20 @@ class ClipGradByGlobalNorm(ClipGradBase):
                 merge_grad = get_tensor_from_selected_rows(merge_grad)
 
             sum_square = _squared_l2_norm(merge_grad)
+
+            # if the gradient mesh is not equal to src mesh
+            # do reshard to get the result of squared_l2 from other pp stage mesh
+            if src_mesh is not None and g.process_mesh != src_mesh:
+                sum_square = dist.reshard(
+                    sum_square, src_mesh, sum_square.placements
+                )
+
             if (
-                sum_square.dtype == core.VarDesc.VarType.FP16
-                or sum_square.dtype == core.VarDesc.VarType.BF16
+                sum_square.dtype == paddle.float16
+                or sum_square.dtype == paddle.bfloat16
             ):
                 sum_square_list_fp16.append(sum_square)
-            elif sum_square.dtype == core.VarDesc.VarType.FP32:
+            elif sum_square.dtype == paddle.float32:
                 sum_square_list_fp32.append(sum_square)
             else:
                 sum_square_list.append(sum_square)
@@ -715,64 +758,21 @@ class ClipGradByGlobalNorm(ClipGradBase):
         global_norm_var = []
         if len(sum_square_list_fp16) > 0:
             global_norm_var_fp16 = async_add_n(sum_square_list_fp16)
-            if self._pp_mesh is not None:
-                # sync pp
-                global_norm_var_fp16 = (
-                    paddle.distributed.auto_parallel.api.dtensor_from_local(
-                        global_norm_var_fp16._local_value().reshape([-1]),
-                        self._pp_mesh,
-                        [paddle.distributed.Partial()],
-                    )
-                )
-                global_norm_var_fp16 = paddle.distributed.reshard(
-                    global_norm_var_fp16,
-                    self._pp_mesh,
-                    [paddle.distributed.Replicate()],
-                )
             global_norm_var.append(global_norm_var_fp16.astype(sum_dtype))
         if len(sum_square_list_fp32) > 0:
             global_norm_var_fp32 = async_add_n(sum_square_list_fp32)
-            if self._pp_mesh is not None:
-                # sync pp
-                global_norm_var_fp32 = (
-                    paddle.distributed.auto_parallel.api.dtensor_from_local(
-                        global_norm_var_fp32._local_value().reshape([-1]),
-                        self._pp_mesh,
-                        [paddle.distributed.Partial()],
-                    )
-                )
-                global_norm_var_fp32 = paddle.distributed.reshard(
-                    global_norm_var_fp32,
-                    self._pp_mesh,
-                    [paddle.distributed.Replicate()],
-                )
             if sum_dtype == 'float32':
                 global_norm_var.append(global_norm_var_fp32)
             else:
                 global_norm_var.append(global_norm_var_fp32.astype(sum_dtype))
         if len(sum_square_list) > 0:
             global_norm_var_fp64 = async_add_n(sum_square_list)
-            if self._pp_mesh is not None:
-                # sync pp
-                global_norm_var_fp64 = (
-                    paddle.distributed.auto_parallel.api.dtensor_from_local(
-                        global_norm_var_fp64._local_value().reshape([-1]),
-                        self._pp_mesh,
-                        [paddle.distributed.Partial()],
-                    )
-                )
-                global_norm_var_fp64 = paddle.distributed.reshard(
-                    global_norm_var_fp64,
-                    self._pp_mesh,
-                    [paddle.distributed.Replicate()],
-                )
             global_norm_var.append(global_norm_var_fp64)
-        if self._pp_mesh is not None:
-            global_norm_var = [t._local_value() for t in global_norm_var]
+
         global_norm_var = async_add_n(global_norm_var)
         global_norm_var = paddle.sqrt(global_norm_var)
         max_global_norm = paddle.full(
-            shape=[], dtype=global_norm_var.dtype, fill_value=self.clip_norm
+            shape=[], dtype=sum_dtype, fill_value=self.clip_norm
         )
 
         need_clip = False
@@ -800,6 +800,29 @@ class ClipGradByGlobalNorm(ClipGradBase):
                     if clip_var.dtype != g.dtype
                     else clip_var
                 )
+                if clip_input.process_mesh != g.process_mesh:
+                    # TODO(pkuzyc): refine the reshard function between local
+                    # and global mesh to avoid the following "_local_tensor()"
+                    # operation.
+                    if set(g.process_mesh.process_ids) < set(
+                        clip_input.process_mesh.process_ids
+                    ):
+                        placements = clip_input.placements
+                        is_replicate = True
+                        for placement in placements:
+                            if not placement.is_replicated():
+                                is_replicate = False
+                                break
+                        if is_replicate:
+                            clip_input = clip_input._local_value()
+                        else:
+                            raise NotImplementedError(
+                                "Reshard a sharded tensor from a local mesh to a global mesh is not supported"
+                            )
+                    else:
+                        clip_input = paddle.distributed.reshard(
+                            clip_input, g.process_mesh, clip_input.placements
+                        )
                 new_grad = paddle.multiply(g, clip_input)
                 params_and_grads.append((p, new_grad))
             else:
@@ -812,6 +835,27 @@ class ClipGradByGlobalNorm(ClipGradBase):
         sum_square_list = []
         sum_square_list_fp16 = []
         sum_square_list_fp32 = []
+
+        auto_parallel_pp = False
+        pp_meshes = set()
+        pp_stage0_mesh = None
+        for p, g in params_grads:
+            if p.is_dist_dense_tensor_type():
+                pp_meshes.add(p.dist_attr().process_mesh)
+                if 0 in p.dist_attr().process_mesh.process_ids:
+                    if pp_stage0_mesh is None:
+                        pp_stage0_mesh = p.dist_attr().process_mesh
+                    else:
+                        assert p.dist_attr().process_mesh == pp_stage0_mesh
+
+        if len(pp_meshes) > 1:
+            from paddle.distributed.auto_parallel.placement_type import (
+                to_placements,
+            )
+
+            auto_parallel_pp = True
+            assert pp_stage0_mesh is not None
+
         for p, g in params_grads:
             if g is None:
                 continue
@@ -824,6 +868,19 @@ class ClipGradByGlobalNorm(ClipGradBase):
                 merge_grad = get_tensor_from_selected_rows(merge_grad)
 
             sum_square = _squared_l2_norm(merge_grad)
+            if (
+                auto_parallel_pp
+                and sum_square.dist_attr().process_mesh != pp_stage0_mesh
+            ):
+                sum_square = paddle.distributed.reshard(
+                    sum_square,
+                    pp_stage0_mesh,
+                    to_placements(
+                        sum_square.dist_attr().dims_mapping,
+                        sum_square.dist_attr().process_mesh,
+                        sum_square.dist_attr().partial_dims,
+                    ),
+                )
             if (
                 sum_square.dtype == DataType.FLOAT16
                 or sum_square.dtype == DataType.BFLOAT16
@@ -863,7 +920,7 @@ class ClipGradByGlobalNorm(ClipGradBase):
         global_norm_var = async_add_n(global_norm_var)
         global_norm_var = paddle.sqrt(global_norm_var)
         max_global_norm = paddle.full(
-            shape=[], dtype=global_norm_var.dtype, fill_value=self.clip_norm
+            shape=[1], dtype=global_norm_var.dtype, fill_value=self.clip_norm
         )
 
         need_clip = False
@@ -891,6 +948,21 @@ class ClipGradByGlobalNorm(ClipGradBase):
                     if clip_var.dtype != g.dtype
                     else clip_var
                 )
+                if (
+                    auto_parallel_pp
+                    and clip_input.dist_attr().process_mesh
+                    != g.dist_attr().process_mesh
+                ):
+                    clip_input = paddle.distributed.reshard(
+                        clip_input,
+                        g.dist_attr().process_mesh,
+                        to_placements(
+                            clip_input.dist_attr().dims_mapping,
+                            clip_input.dist_attr().process_mesh,
+                            clip_input.dist_attr().partial_dims,
+                        ),
+                    )
+
                 new_grad = paddle.multiply(g, clip_input)
                 params_and_grads.append((p, new_grad))
             else:
@@ -933,7 +1005,7 @@ class ClipGradByGlobalNorm(ClipGradBase):
                         sum_square_list.append(sum_square)
 
             if len(sum_square_list_fp16) > 0 and len(sum_square_list_bf16) > 0:
-                raise NotSupportedError(
+                raise NotImplementedError(
                     'FP16 and BF16 are not supported at the same time.'
                 )
 

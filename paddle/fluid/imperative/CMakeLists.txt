@@ -4,7 +4,7 @@ cc_library(
   DEPS phi common)
 cc_library(
   var_helper
-  SRCS var_helper.cc
+  SRCS var_helper.cc type_defs.cc
   DEPS tensor phi common)
 if(WITH_XPU)
   cc_library(
@@ -19,12 +19,9 @@ if(WITH_XPU)
          var_type_traits
          op_kernel_type
          data_transform
-         nan_inf_utils
          phi
          common
-         var_helper
-         profiler
-         place)
+         var_helper)
 else()
   cc_library(
     prepared_operator
@@ -37,12 +34,9 @@ else()
          var_type_traits
          op_kernel_type
          data_transform
-         nan_inf_utils
          phi
          common
-         var_helper
-         profiler
-         place)
+         var_helper)
 endif()
 cc_library(
   layer
@@ -54,7 +48,6 @@ cc_library(
        variable_helper
        op_registry
        var_helper)
-add_subdirectory(jit)
 if(WITH_GPU)
   cc_library(
     layout_autotune
@@ -75,7 +68,6 @@ cc_library(
   SRCS tracer.cc
   DEPS layer
        engine
-       program_desc_tracer
        amp
        denormal
        garbage_collector
@@ -83,7 +75,8 @@ cc_library(
        layout_autotune
        ops_extra_info
        phi
-       common)
+       common
+       global_utils)
 cc_library(
   basic_engine
   SRCS basic_engine.cc
@@ -158,7 +151,7 @@ if(NOT WIN32)
   cc_library(
     data_loader
     SRCS data_loader.cc
-    DEPS enforce common)
+    DEPS phi common)
 endif()
 if(WITH_GLOO)
   cc_library(

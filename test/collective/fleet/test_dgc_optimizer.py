@@ -48,9 +48,11 @@ class TestDGCMomentumOptimizer(unittest.TestCase):
             lod_level=0,
             name="mul.x",
             optimize_attr={'learning_rate': 1.1},
-            regularizer=None
-            if regularization is not None
-            else regularizer.L2Decay(2e-4),
+            regularizer=(
+                None
+                if regularization is not None
+                else regularizer.L2Decay(2e-4)
+            ),
         )
         mul_y = block.create_var(
             dtype="float32", shape=[dims[1], dims[2]], lod_level=0, name="mul.y"
@@ -144,7 +146,7 @@ class TestDGCMomentumOptimizer(unittest.TestCase):
                 self.assertAlmostEqual(op.attr('regular_coeff'), coeff)
                 print("dgc regular_coeff=" + str(coeff))
 
-    def test_tpyeError(self):
+    def test_typeError(self):
         # the type of DGCMomentumOptimizer(grad_clip=) must be 'ClipGradByNorm'
         with self.assertRaises(TypeError):
             dgc_momentum_optimizer = self.MockDGCMomentum(

@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal
+
 import numpy as np
 
 import paddle
@@ -23,20 +27,25 @@ from .utils import (
     check_input_type,
 )
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from paddle import Tensor
+
 
 def minimize_bfgs(
-    objective_func,
-    initial_position,
-    max_iters=50,
-    tolerance_grad=1e-7,
-    tolerance_change=1e-9,
-    initial_inverse_hessian_estimate=None,
-    line_search_fn='strong_wolfe',
-    max_line_search_iters=50,
-    initial_step_length=1.0,
-    dtype='float32',
-    name=None,
-):
+    objective_func: Callable[[Tensor], Tensor],
+    initial_position: Tensor,
+    max_iters: int = 50,
+    tolerance_grad: float = 1e-7,
+    tolerance_change: float = 1e-9,
+    initial_inverse_hessian_estimate: Tensor | None = None,
+    line_search_fn: Literal['strong_wolfe'] = 'strong_wolfe',
+    max_line_search_iters: int = 50,
+    initial_step_length: float = 1.0,
+    dtype: Literal['float32', 'float64'] = 'float32',
+    name: str | None = None,
+) -> tuple[bool, int, Tensor, Tensor, Tensor, Tensor]:
     r"""
     Minimizes a differentiable function `func` using the BFGS method.
     The BFGS is a quasi-Newton method for solving an unconstrained optimization problem over a differentiable function.
@@ -61,7 +70,7 @@ def minimize_bfgs(
         tolerance_grad (float, optional): terminates if the gradient norm is smaller than this. Currently gradient norm uses inf norm. Default value: 1e-7.
         tolerance_change (float, optional): terminates if the change of function value/position/parameter between two iterations is smaller than this value. Default value: 1e-9.
         initial_inverse_hessian_estimate (Tensor, optional): the initial inverse hessian approximation at initial_position. It must be symmetric and positive definite. If not given, will use an identity matrix of order N, which is size of ``initial_position`` . Default value: None.
-        line_search_fn (str, optional): indicate which line search method to use, only support 'strong wolfe' right now. May support 'Hager Zhang' in the futrue. Default value: 'strong wolfe'.
+        line_search_fn (str, optional): indicate which line search method to use, only support 'strong wolfe' right now. May support 'Hager Zhang' in the future. Default value: 'strong wolfe'.
         max_line_search_iters (int, optional): the maximum number of line search iterations. Default value: 50.
         initial_step_length (float, optional): step length used in first iteration of line search. different initial_step_length may cause different optimal result. For methods like Newton and quasi-Newton the initial trial step length should always be 1.0. Default value: 1.0.
         dtype ('float32' | 'float64', optional): data type used in the algorithm, the data type of the input parameter must be consistent with the dtype. Default value: 'float32'.
@@ -161,7 +170,7 @@ def minimize_bfgs(
         # --------------   compute pk   -------------- #
         pk = -paddle.matmul(Hk, g1)
 
-        # --------------   compute alpha by line serach   -------------- #
+        # --------------   compute alpha by line search   -------------- #
         if line_search_fn == 'strong_wolfe':
             alpha, value, g2, ls_func_calls = strong_wolfe(
                 f=objective_func,
@@ -173,9 +182,7 @@ def minimize_bfgs(
             )
         else:
             raise NotImplementedError(
-                "Currently only support line_search_fn = 'strong_wolfe', but the specified is '{}'".format(
-                    line_search_fn
-                )
+                f"Currently only support line_search_fn = 'strong_wolfe', but the specified is '{line_search_fn}'"
             )
         num_func_calls += ls_func_calls
 

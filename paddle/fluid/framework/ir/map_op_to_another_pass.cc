@@ -25,11 +25,12 @@ namespace ir {
 
 void MapOp2AnotherPass::ApplyImpl(ir::Graph* graph) const {
   PADDLE_ENFORCE_NOT_NULL(
-      graph, platform::errors::InvalidArgument("Graph cannot be nullptr."));
+      graph, common::errors::InvalidArgument("Graph cannot be nullptr."));
   FusePassBase::Init("map_op_to_another_pass", graph);
 
   int found_count = 0;
   std::unordered_map<std::string, std::string> replaced_map{
+      {"conv2d", "conv2d"},
       {"depthwise_conv2d", "conv2d"},
       {"flatten_contiguous_range", "reshape2"},
   };
@@ -51,6 +52,10 @@ void MapOp2AnotherPass::ApplyImpl(ir::Graph* graph) const {
           input_shape[2] == 1 && input_shape[3] == 1) {
         op_desc->SetType(replaced_map[op_type]);
         op_desc->SetAttr("shape", std::vector<int>{0, -1});
+      } else if (start_axis == 2 && stop_axis == 3 && input_shape.size() == 4 &&
+                 input_shape[2] == 1) {
+        op_desc->SetType(replaced_map[op_type]);
+        op_desc->SetAttr("shape", std::vector<int>{0, 0, -1});
       }
     } else if (op_type == "depthwise_conv2d") {
       auto groups = PADDLE_GET_CONST(int, op_desc->GetAttr("groups"));
@@ -61,6 +66,10 @@ void MapOp2AnotherPass::ApplyImpl(ir::Graph* graph) const {
         op_desc->SetAttr("use_cudnn", true);
 #endif
       }
+    } else if (op_type == "conv2d") {
+      op_desc->SetType(replaced_map[op_type]);
+      op_desc->RemoveAttr("use_cudnn");
+      op_desc->SetAttr("use_cudnn", true);
     }
     op_desc->Flush();
     ++found_count;

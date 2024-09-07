@@ -220,8 +220,7 @@ SqueezeExcitationFusePattern::SqueezeExcitationFusePattern(
 
 void SqueezeExcitationFusePass::ApplyImpl(ir::Graph* graph) const {
   PADDLE_ENFORCE_NOT_NULL(
-      graph,
-      platform::errors::PreconditionNotMet("graph should not be null. "));
+      graph, common::errors::PreconditionNotMet("graph should not be null. "));
   Init(name_scope_, graph);
 
   int found_subgraph_count = 0;
@@ -287,7 +286,7 @@ int SqueezeExcitationFusePass::ApplyImpl(ir::Graph* graph,
     auto* block = pool2d->Op()->Block();
     auto* scope = param_scope();
     PADDLE_ENFORCE_NOT_NULL(
-        scope, platform::errors::InvalidArgument("Scope cannot be nullptr."));
+        scope, common::errors::InvalidArgument("Scope cannot be nullptr."));
 
     framework::OpDesc fused_op_desc(block);
     fused_op_desc.SetType("squeeze_excitation_block");
@@ -310,16 +309,17 @@ int SqueezeExcitationFusePass::ApplyImpl(ir::Graph* graph,
     if (mul_1_w_dims[0] != mul_2_w_dims[1] ||
         mul_1_w_dims[1] != mul_2_w_dims[0] ||
         mul_1_w_len != mul_1_w_dims[0] * mul_1_w_dims[1]) {
-      LOG(FATAL) << "Error: Dims of excitation mul1 weight is: " << mul_1_w_dims
-                 << ", but get dims of excitation mul2 weight is: "
-                 << mul_2_w_dims;
+      std::stringstream ss;
+      ss << "Error: Dims of excitation mul1 weight is: " << mul_1_w_dims
+         << ", but get dims of excitation mul2 weight is: " << mul_2_w_dims;
+      PADDLE_THROW(common::errors::InvalidArgument(ss.str()));
     }
     std::vector<int16_t> encode_filter_int16;
     encode_filter_int16.resize(mul_1_w_len + mul_2_w_len);
 
     PADDLE_ENFORCE_EQ(mul_1_w_dims[1] % mul_1_w_dims[0] == 0,
                       1,
-                      platform::errors::InvalidArgument(
+                      common::errors::InvalidArgument(
                           "Reduction ratio of excitation is not an integer."
                           "Received mul_1_w_dims[1]: %d, mul_1_w_dims[0]: %d",
                           mul_1_w_dims[1],
@@ -355,7 +355,7 @@ int SqueezeExcitationFusePass::ApplyImpl(ir::Graph* graph,
     new_filter_t.Resize(DDim({mul_1_w_len + mul_2_w_len}));
     new_filter_t.set_type(phi::DataType::INT16);
     auto* cpu_ctx = static_cast<phi::CPUContext*>(
-        platform::DeviceContextPool::Instance().Get(phi::CPUPlace()));
+        phi::DeviceContextPool::Instance().Get(phi::CPUPlace()));
     auto* new_filter_data = cpu_ctx->Alloc<int16_t>(&new_filter_t);
 
     memcpy(new_filter_data,
@@ -452,7 +452,7 @@ int SqueezeExcitationFusePass::ApplyImpl(ir::Graph* graph,
       new_bias_t.Resize(DDim({mul_1_bias_numel + mul_2_bias_numel}));
       new_bias_t.set_type(phi::DataType::FLOAT32);
       auto* cpu_ctx = static_cast<phi::CPUContext*>(
-          platform::DeviceContextPool::Instance().Get(phi::CPUPlace()));
+          phi::DeviceContextPool::Instance().Get(phi::CPUPlace()));
       auto* new_bias_data = cpu_ctx->Alloc<float>(&new_bias_t);
 
       memcpy(new_bias_data,
@@ -473,11 +473,6 @@ int SqueezeExcitationFusePass::ApplyImpl(ir::Graph* graph,
       output_name = ew_mul_out->Name();
     }
     fused_op_desc.SetOutput("out", {output_name});
-    std::string max_output_name = output_name + "_max";
-    VarDesc max_out_desc(max_output_name);
-    auto* max_output_node = graph->CreateVarNode(&max_out_desc);
-
-    fused_op_desc.SetOutput("out_max", {max_output_name});
     fused_op_desc.SetAttr("op_type", std::vector<int>{4});
     fused_op_desc.SetAttr("place_x", std::vector<int>{0});
     fused_op_desc.SetAttr("place_y", std::vector<int>{9});
@@ -539,7 +534,6 @@ int SqueezeExcitationFusePass::ApplyImpl(ir::Graph* graph,
     } else {
       IR_NODE_LINK_TO(new_op_node, ew_mul_out);
     }
-    IR_NODE_LINK_TO(new_op_node, max_output_node);
     // delete useless node
     std::unordered_set<const Node*> delete_nodes = {
         pool2d, mul_1, mul_1_out, mul_2, mul_2_out, ew_mul};

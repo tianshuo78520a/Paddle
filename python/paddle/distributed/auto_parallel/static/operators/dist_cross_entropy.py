@@ -64,7 +64,7 @@ class DistributedCrossEntropy(DistributedOperatorImplContainer):
 
         # step2: infer spmd
         rule = get_phi_spmd_rule("softmax_with_cross_entropy")
-        # tensor order following order in PHI defition
+        # tensor order following order in PHI definition
         fw_results = rule.infer_forward(
             logits_spec,
             label_spec,
@@ -87,7 +87,7 @@ class DistributedCrossEntropy(DistributedOperatorImplContainer):
         )
 
         # step3: update dist_attr
-        # tensor order following order in PHI defition
+        # tensor order following order in PHI definition
         changed = update_op_dims_mapping(
             dist_op,
             [logits_name, label_name],
@@ -164,7 +164,7 @@ class DistributedCrossEntropyImpl0(DistributedOperatorImpl):
         op_dist_attr = ctx.get_op_dist_attr_for_program(src_op)
         assert (
             op_dist_attr is not None
-        ), f"forward op [{str(src_op)}] don't have dist attribute !"
+        ), f"forward op [{src_op}] don't have dist attribute !"
 
         # check validation of inputs / outputs
         assert 'Logits' in kwargs, "input [Logits] is not given"
@@ -230,7 +230,7 @@ class DistributedCrossEntropyImpl0(DistributedOperatorImpl):
 
         assert (
             op_dist_attr is not None
-        ), f"backward op [{str(backward_op)}] don't have dist attribute !"
+        ), f"backward op [{backward_op}] don't have dist attribute !"
 
         # check validation of inputs / outputs
         assert 'Softmax' in kwargs, "input [Logits] is not given"
@@ -287,7 +287,7 @@ class DistributedCrossEntropyImpl1(DistributedOperatorImpl):
         op_dist_attr = ctx.get_op_dist_attr_for_program(src_op)
         assert (
             op_dist_attr is not None
-        ), f"forward op [{str(src_op)}] don't have dist attribute !"
+        ), f"forward op [{src_op}] don't have dist attribute !"
 
         # check validation of inputs / outputs
         assert 'Logits' in kwargs, "input [Logits] is not given"
@@ -397,7 +397,7 @@ class DistributedCrossEntropyImpl1(DistributedOperatorImpl):
 
         assert (
             op_dist_attr is not None
-        ), f"backward op [{str(backward_op)}] don't have dist attribute !"
+        ), f"backward op [{backward_op}] don't have dist attribute !"
 
         # check validation of inputs / outputs
         assert 'Softmax' in kwargs, "input [Softmax] is not given"

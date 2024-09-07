@@ -24,7 +24,7 @@ from paddle.static import InputSpec
 from paddle.vision import models
 
 
-# test the predicted resutls of static graph and dynamic graph are equal
+# test the predicted results of static graph and dynamic graph are equal
 # when used pretrained model
 class TestPretrainedModel(unittest.TestCase):
     def infer(self, arch):
@@ -67,8 +67,9 @@ class TestPretrainedModel(unittest.TestCase):
             'squeezenet1_0',
             'shufflenet_v2_x0_25',
         ]
-        for arch in arches:
-            self.infer(arch)
+        with paddle.pir_utils.OldIrGuard():
+            for arch in arches:
+                self.infer(arch)
 
 
 if __name__ == '__main__':

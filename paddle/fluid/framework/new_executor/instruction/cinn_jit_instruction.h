@@ -28,7 +28,7 @@ class Scope;
 class CinnJitInstruction : public InstructionBase {
  public:
   CinnJitInstruction(size_t id,
-                     const platform::Place& place,
+                     const phi::Place& place,
                      ::pir::Operation* op,
                      const ValueExecutionInfo* value_exec_info);
 
@@ -45,12 +45,14 @@ class CinnJitInstruction : public InstructionBase {
 
   std::shared_ptr<FnPtrImpl> fn_ptr_impl_{nullptr};
 
-  platform::Place place_;
+  phi::Place place_;
 
   phi::DeviceContext* dev_ctx_;
 
-  phi::DenseTensor* out_tensor_;
+  int32_t input_tensor_size;
+  int32_t output_tensor_size;
 
+  bool need_update_shape{false};
   std::vector<phi::DenseTensor*> tensor_args_;
 
   ::pir::Operation* op_{nullptr};  // not owned

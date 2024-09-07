@@ -13,10 +13,13 @@
 # limitations under the license.
 
 import os
+import sys
 import tempfile
 import unittest
 
 import numpy as np
+
+sys.path.append("../../quantization")
 from imperative_test_utils import fix_model_dict, train_lenet
 
 import paddle
@@ -40,7 +43,7 @@ if core.is_compiled_with_cuda():
     set_flags({"FLAGS_cudnn_deterministic": True})
 
 
-def get_vaild_warning_num(warning, w):
+def get_valid_warning_num(warning, w):
     num = 0
     for i in range(len(w)):
         if warning in str(w[i].message):
@@ -119,7 +122,7 @@ class ImperativeLenet(paddle.nn.Layer):
         return x
 
 
-class TestImperativeOutSclae(unittest.TestCase):
+class TestImperativeOutScale(unittest.TestCase):
     def setUp(self):
         self.root_path = tempfile.TemporaryDirectory()
         self.param_save_path = os.path.join(
@@ -145,8 +148,7 @@ class TestImperativeOutSclae(unittest.TestCase):
 
         with base.dygraph.guard():
             np.random.seed(seed)
-            paddle.static.default_main_program().random_seed = seed
-            paddle.static.default_startup_program().random_seed = seed
+            paddle.seed(seed)
 
             lenet = ImperativeLenet()
             lenet = fix_model_dict(lenet)

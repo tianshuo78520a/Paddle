@@ -26,12 +26,12 @@
 namespace cub = hipcub;
 #endif
 
+#include "paddle/common/hostdevice.h"
 #include "paddle/phi/backends/gpu/gpu_context.h"
 #include "paddle/phi/common/amp_type_traits.h"
 #include "paddle/phi/common/bfloat16.h"
 #include "paddle/phi/common/float16.h"
 #include "paddle/phi/common/memory_utils.h"
-#include "paddle/phi/core/hostdevice.h"
 #include "paddle/phi/core/kernel_registry.h"
 
 namespace phi {
@@ -300,7 +300,7 @@ void ScanKernel(const Context& dev_ctx,
   PADDLE_ENFORCE_EQ(
       axis < out_dims.size() && axis >= (0 - out_dims.size()),
       true,
-      phi::errors::OutOfRange(
+      common::errors::OutOfRange(
           "Attr(axis) is out of range, It's expected "
           "to be in range of [-%d, %d]. But received Attr(axis) = %d.",
           out_dims.size(),

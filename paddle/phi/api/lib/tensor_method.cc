@@ -96,21 +96,21 @@ void Tensor::copy_(const Tensor &src,
   if (initialized()) {
     PADDLE_ENFORCE_EQ(dtype(),
                       src.dtype(),
-                      phi::errors::PreconditionNotMet(
+                      common::errors::PreconditionNotMet(
                           "Tensor %s has different data type with Tensor %s, "
                           "Tensor Copy cannot be performed!",
                           name(),
                           src.name()));
     PADDLE_ENFORCE_EQ(impl()->type_info().id(),
                       src.impl()->type_info().id(),
-                      phi::errors::PreconditionNotMet(
+                      common::errors::PreconditionNotMet(
                           "Tensor %s has different type with Tensor %s, Tensor "
                           "Copy cannot be performed!",
                           name(),
                           src.name()));
     PADDLE_ENFORCE_EQ(target_place,
                       place(),
-                      phi::errors::PreconditionNotMet(
+                      common::errors::PreconditionNotMet(
                           "Place is different of dst tensor and args %s, which "
                           "current tensor holds %s "
                           "Copy cannot be performed!",
@@ -136,7 +136,7 @@ void Tensor::copy_(const Tensor &src,
   auto *dev_ctx = pool.GetMutable(
       place.GetType() == target_place.GetType() ? target_place : place);
 
-  if (kernel_type == KernelType::DENSE_TENSOR_KENREL) {
+  if (kernel_type == KernelType::DENSE_TENSOR_KERNEL) {
 #ifdef PADDLE_WITH_DISTRIBUTE
   bool run_auto_parallel = AllInputsAreDistTensor(src);
   bool rank_is_in_current_mesh = false;
@@ -154,7 +154,7 @@ void Tensor::copy_(const Tensor &src,
       PADDLE_ENFORCE_EQ((meta_dist_input_x.dist_attr() == this_dist_attr
                         || this_dist_attr.empty()),
                         true,
-                        phi::errors::PreconditionNotMet(
+                        common::errors::PreconditionNotMet(
                             "DistAttr is different of dst "
                             "tensor and args %s, which "
                             "current tensor holds %s "
@@ -200,7 +200,7 @@ void Tensor::copy_(const Tensor &src,
               target_place,
               blocking,
               static_cast<phi::DenseTensor *>(impl_.get()));
-  } else if (kernel_type == KernelType::SELECTED_ROWS_KENREL) {
+  } else if (kernel_type == KernelType::SELECTED_ROWS_KERNEL) {
     SetSelectedRowsKernelOutput(this);
     phi::MetaTensor meta_out(impl_.get());
     phi::UnchangedInferMeta(
@@ -237,7 +237,7 @@ void Tensor::copy_(const Tensor &src,
               blocking,
               static_cast<phi::SparseCsrTensor *>(impl_.get()));
   } else {
-    PADDLE_THROW(phi::errors::InvalidArgument(
+    PADDLE_THROW(common::errors::InvalidArgument(
         "We currently only support dense tensor copy for now and if u need to "
         "copy selected rows please raise a issue."));
   }

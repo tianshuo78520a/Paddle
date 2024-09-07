@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import unittest
 
 import numpy as np
@@ -27,7 +28,7 @@ class TestRemoveUselessScalePattern(PassTest):
     def is_program_valid(self, program=None):
         return True
 
-    def build_ir_progam(self):
+    def build_ir_program(self):
         with paddle.pir_utils.IrGuard():
             start_prog = paddle.static.Program()
             main_prog = paddle.static.Program()
@@ -37,7 +38,7 @@ class TestRemoveUselessScalePattern(PassTest):
                 )
                 out = paddle.scale(x, scale=1.0, bias=0.0)
                 out = paddle.assign(out)
-                self.pass_list = ['identity_op_clean_pass']
+                self.pass_attr_list = [{'identity_op_clean_pass': {}}]
                 self.feeds = {
                     "x": np.random.random((3, 1, 28, 28)).astype("float32")
                 }
@@ -46,19 +47,24 @@ class TestRemoveUselessScalePattern(PassTest):
                 return [main_prog, start_prog]
 
     def sample_program(self):
-        pir_program = self.build_ir_progam()
+        pir_program = self.build_ir_program()
         yield pir_program, False
 
     def test_check_output(self):
         self.check_pass_correct()
 
     def setUp(self):
-        self.places.append(paddle.CPUPlace())
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not core.is_compiled_with_cuda()
+        ):
+            self.places.append(paddle.CPUPlace())
         if core.is_compiled_with_cuda():
             self.places.append(paddle.CUDAPlace(0))
 
 
-class TestRemoveRedundentScalePattern(PassTest):
+class TestRemoveRedundantScalePattern(PassTest):
     def is_program_valid(self, program=None):
         return True
 
@@ -85,7 +91,7 @@ class TestRemoveRedundentScalePattern(PassTest):
                             bias_after_scale=bias_after_scale_2,
                         )
                         out = paddle.assign(out)
-                        self.pass_list = ['identity_op_clean_pass']
+                        self.pass_attr_list = [{'identity_op_clean_pass': {}}]
                         self.feeds = {
                             "x": np.random.random((3, 1, 28, 28)).astype(
                                 "float32"
@@ -99,7 +105,12 @@ class TestRemoveRedundentScalePattern(PassTest):
         self.check_pass_correct()
 
     def setUp(self):
-        self.places.append(paddle.CPUPlace())
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not core.is_compiled_with_cuda()
+        ):
+            self.places.append(paddle.CPUPlace())
         if core.is_compiled_with_cuda():
             self.places.append(paddle.CUDAPlace(0))
 
@@ -119,7 +130,7 @@ class TestRemoveUselessCastPattern(PassTest):
                     )
                     out = paddle.cast(x, tmp_type)
                     out = paddle.assign(out)
-                    self.pass_list = ['identity_op_clean_pass']
+                    self.pass_attr_list = [{'identity_op_clean_pass': {}}]
                     self.feeds = {
                         "x": np.random.random((3, 1, 28, 28)).astype(tmp_type)
                     }
@@ -131,7 +142,12 @@ class TestRemoveUselessCastPattern(PassTest):
         self.check_pass_correct()
 
     def setUp(self):
-        self.places.append(paddle.CPUPlace())
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not core.is_compiled_with_cuda()
+        ):
+            self.places.append(paddle.CPUPlace())
         if core.is_compiled_with_cuda():
             self.places.append(paddle.CUDAPlace(0))
 
@@ -150,7 +166,7 @@ class TestRemoveUselessConcatPattern(PassTest):
                 )
                 out = paddle.concat(x=[x_input])
                 out = paddle.assign(out)
-                self.pass_list = ['identity_op_clean_pass']
+                self.pass_attr_list = [{'identity_op_clean_pass': {}}]
                 self.feeds = {
                     "x_input": np.random.random((3, 1, 28, 28)).astype(
                         "float32"
@@ -164,77 +180,115 @@ class TestRemoveUselessConcatPattern(PassTest):
         self.check_pass_correct()
 
     def setUp(self):
-        self.places.append(paddle.CPUPlace())
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not core.is_compiled_with_cuda()
+        ):
+            self.places.append(paddle.CPUPlace())
         if core.is_compiled_with_cuda():
             self.places.append(paddle.CUDAPlace(0))
 
 
-class TestRemoveRedundentCastPattern(PassTest):
+class TestRemoveRedundantCastPattern(PassTest):
     def is_program_valid(self, program=None):
         return True
 
     def sample_program(self):
-        for type_1 in ["float32"]:
-            for type_2 in ["float16"]:
+        for type_1 in ["float32", "int64", "int32", "bool"]:
+            for type_2 in ["bfloat16"]:
                 with paddle.pir_utils.IrGuard():
                     main_prog = paddle.static.Program()
                     start_prog = paddle.static.Program()
                     with paddle.pir.core.program_guard(main_prog, start_prog):
                         x = paddle.static.data(
-                            name='x', shape=[3, 1, 28, 28], dtype="int32"
+                            name='x', shape=[3, 1, 28, 28], dtype="float16"
                         )
                         out = paddle.cast(paddle.cast(x, type_1), type_2)
                         out = paddle.assign(out)
-                        self.pass_list = ['identity_op_clean_pass']
+                        self.pass_attr_list = [{'identity_op_clean_pass': {}}]
                         self.feeds = {
                             "x": np.random.random((3, 1, 28, 28)).astype(
-                                "int32"
+                                "float16"
                             )
                         }
                         self.fetch_list = [out]
-                        self.valid_op_map = {"pd_op.cast": 1}
+                        self.fetch_list = [out]
+                        if type_1 in ["int64", "int32", "bool"]:
+                            remain_cast = 2
+                        else:
+                            remain_cast = 1
+                        self.valid_op_map = {"pd_op.cast": remain_cast}
                         yield [main_prog, start_prog], False
 
     def test_check_output(self):
         self.check_pass_correct()
 
     def setUp(self):
-        self.places.append(paddle.CPUPlace())
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not core.is_compiled_with_cuda()
+        ):
+            self.places.append(paddle.CPUPlace())
         if core.is_compiled_with_cuda():
             self.places.append(paddle.CUDAPlace(0))
 
 
-class TestRemoveRedundentTransposePattern(PassTest):
+class TestDeleteDropoutOpPatternPattern(PassTest):
     def is_program_valid(self, program=None):
         return True
 
     def sample_program(self):
         for perm1_shape in [[1, 2, 0]]:
             for perm2_shape in [[0, 2, 1]]:
-                with paddle.pir_utils.IrGuard():
-                    main_prog = paddle.static.Program()
-                    start_prog = paddle.static.Program()
-                    with paddle.pir.core.program_guard(main_prog, start_prog):
-                        x = paddle.static.data(
-                            name='x', shape=[2, 3, 4], dtype="float32"
-                        )
-                        out = paddle.transpose(
-                            paddle.transpose(x, perm1_shape), perm2_shape
-                        )
-                        out = paddle.assign(out)
-                        self.pass_list = ['identity_op_clean_pass']
-                        self.feeds = {
-                            "x": np.random.random((2, 3, 4)).astype("float32")
-                        }
-                        self.fetch_list = [out]
-                        self.valid_op_map = {"pd_op.transpose": 1}
-                        yield [main_prog, start_prog], False
+                for drop_mode in ['upscale_in_train', 'downscale_in_infer']:
+                    with paddle.pir_utils.IrGuard():
+                        main_prog = paddle.static.Program()
+                        start_prog = paddle.static.Program()
+                        with paddle.pir.core.program_guard(
+                            main_prog, start_prog
+                        ):
+                            x = paddle.static.data(
+                                name='x', shape=[2, 3, 4], dtype="float32"
+                            )
+                            transpose_out = paddle.transpose(
+                                paddle.transpose(x, perm1_shape), perm2_shape
+                            )
+                            dropout_net = paddle.nn.Dropout(
+                                p=0.5, mode=drop_mode
+                            )
+                            dropout_net.eval()  # set is_test=true
+                            dropout_out = dropout_net(transpose_out)
+                            out = paddle.assign(dropout_out)
+                            self.pass_attr_list = [
+                                {'identity_op_clean_pass': {}}
+                            ]
+                            self.feeds = {
+                                "x": np.random.random((2, 3, 4)).astype(
+                                    "float32"
+                                )
+                            }
+                            self.fetch_list = [out]
+                            if drop_mode == 'downscale_in_infer':
+                                self.valid_op_map = {
+                                    "pd_op.dropout": 0,
+                                    "pd_op.scale": 1,
+                                }
+                            else:
+                                self.valid_op_map = {"pd_op.dropout": 0}
+                            yield [main_prog, start_prog], False
 
     def test_check_output(self):
         self.check_pass_correct()
 
     def setUp(self):
-        self.places.append(paddle.CPUPlace())
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not core.is_compiled_with_cuda()
+        ):
+            self.places.append(paddle.CPUPlace())
         if core.is_compiled_with_cuda():
             self.places.append(paddle.CUDAPlace(0))
 

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 #include "paddle/cinn/ir/ir_base.h"
-
+#include <sstream>
 #include "paddle/cinn/common/cinn_value.h"
 #include "paddle/cinn/common/common.h"
 #include "paddle/cinn/ir/buffer.h"
@@ -22,7 +22,7 @@
 #include "paddle/cinn/ir/ir_visitor.h"
 #include "paddle/cinn/ir/module.h"
 #include "paddle/cinn/ir/tensor.h"
-
+#include "paddle/common/enforce.h"
 namespace cinn {
 namespace ir {
 
@@ -50,7 +50,7 @@ std::ostream &operator<<(std::ostream &os, IrNodeTy type) {
 #undef __m
 
     default:
-      LOG(FATAL) << "unknown IrNodeTy found";
+      PADDLE_THROW(::common::errors::InvalidArgument("unknown IrNodeTy found"));
   }
 
   return os;
@@ -102,58 +102,108 @@ Expr::Expr(const Var &var) {
   *static_cast<IrNodeRef *>(this) = *static_cast<const IrNodeRef *>(&var);
 }
 bool Expr::as_bool() const {
-  CHECK(type().is_uint(1));
+  PADDLE_ENFORCE_EQ(
+      type().is_uint(1),
+      true,
+      ::common::errors::InvalidArgument(
+          "Invalid type. The type must be a 1-bit unsigned integer type."));
   return As<UIntImm>()->value;
 }
 
 int8_t Expr::as_int8() const {
-  CHECK(type().is_int(8));
+  PADDLE_ENFORCE_EQ(
+      type().is_int(8),
+      true,
+      ::common::errors::InvalidArgument(
+          "Invalid type. The type must be an 8-bit integer type."));
   return As<IntImm>()->value;
 }
 int16_t Expr::as_int16() const {
-  CHECK(type().is_int(16));
+  PADDLE_ENFORCE_EQ(
+      type().is_int(16),
+      true,
+      ::common::errors::InvalidArgument(
+          "Invalid type. The type must be an 16-bit integer type."));
   return As<IntImm>()->value;
 }
 int32_t Expr::as_int32() const {
-  CHECK(type().is_int(32));
+  PADDLE_ENFORCE_EQ(
+      type().is_int(32),
+      true,
+      ::common::errors::InvalidArgument(
+          "Invalid type. The type must be an 32-bit integer type. %s",
+          ::common::GetCurrentTraceBackString()));
   return As<IntImm>()->value;
 }
 int64_t Expr::as_int64() const {
-  CHECK(type().is_int(64));
+  if (!type().is_int(64))
+    PADDLE_ENFORCE_EQ(type().is_int(32),
+                      true,
+                      ::common::errors::InvalidArgument(
+                          "Invalid type. The type must be an 32-bit "
+                          "integer or 64-bit integer type."));
   return As<IntImm>()->value;
 }
 
 uint8_t Expr::as_uint8() const {
-  CHECK(type().is_uint(8));
+  PADDLE_ENFORCE_EQ(
+      type().is_uint(8),
+      true,
+      ::common::errors::InvalidArgument(
+          "Invalid type. The type must be a 8-bit unsigned integer type."));
   return As<UIntImm>()->value;
 }
 uint16_t Expr::as_uint16() const {
-  CHECK(type().is_uint(16));
+  PADDLE_ENFORCE_EQ(
+      type().is_uint(16),
+      true,
+      ::common::errors::InvalidArgument(
+          "Invalid type. The type must be a 16-bit unsigned integer type."));
   return As<UIntImm>()->value;
 }
 uint32_t Expr::as_uint32() const {
-  CHECK(type().is_uint(32));
+  PADDLE_ENFORCE_EQ(
+      type().is_uint(32),
+      true,
+      ::common::errors::InvalidArgument(
+          "Invalid type. The type must be a 32-bit unsigned integer type."));
   return As<UIntImm>()->value;
 }
 uint64_t Expr::as_uint64() const {
-  CHECK(type().is_uint(64));
+  PADDLE_ENFORCE_EQ(
+      type().is_uint(64),
+      true,
+      ::common::errors::InvalidArgument(
+          "Invalid type. The type must be a 64-bit unsigned integer type."));
   return As<UIntImm>()->value;
 }
 
 bfloat16 Expr::as_bfloat16() const {
-  CHECK(type().is_bfloat16());
+  PADDLE_ENFORCE_EQ(type().is_bfloat16(),
+                    true,
+                    ::common::errors::InvalidArgument(
+                        "Invalid type. The type must be bfloat16() type."));
   return bfloat16(As<FloatImm>()->value);
 }
 float16 Expr::as_float16() const {
-  CHECK(type().is_float16());
+  PADDLE_ENFORCE_EQ(type().is_bfloat16(),
+                    true,
+                    ::common::errors::InvalidArgument(
+                        "Invalid type. The type must be bfloat16() type."));
   return float16(As<FloatImm>()->value);
 }
 float Expr::as_float() const {
-  CHECK(type().is_float(32));
+  PADDLE_ENFORCE_EQ(type().is_float(32),
+                    true,
+                    ::common::errors::InvalidArgument(
+                        "The type must be a 32-bit floating point type."));
   return As<FloatImm>()->value;
 }
 double Expr::as_double() const {
-  CHECK(type().is_float(64));
+  PADDLE_ENFORCE_EQ(type().is_float(64),
+                    true,
+                    ::common::errors::InvalidArgument(
+                        "The type must be a 64-bit floating point type."));
   return As<FloatImm>()->value;
 }
 
@@ -164,7 +214,9 @@ Expr &Expr::operator=(const Expr &other) {
 
 Expr::operator Var() {
   auto *x = As<ir::_Var_>();
-  CHECK(x);
+  PADDLE_ENFORCE_NOT_NULL(
+      x,
+      ::common::errors::InvalidArgument("x is a nullptr. It must not be null"));
   return ir::Var(x);
 }
 
@@ -173,7 +225,10 @@ bool Expr::is_constant() const {
 }
 
 double Expr::get_constant() const {
-  CHECK(is_constant()) << *this << " is not constant! Please check.";
+  PADDLE_ENFORCE_EQ(is_constant(),
+                    true,
+                    ::common::errors::InvalidArgument(
+                        "%s is not constant! Please check.", *this));
   auto *vi = As<IntImm>();
   auto *vf = As<FloatImm>();
   if (vi) return vi->value;
@@ -195,14 +250,19 @@ _Module_ *Expr::as_module() { return As<_Module_>(); }
 const _Module_ *Expr::as_module() const { return As<_Module_>(); }
 ir::Module Expr::as_module_ref() const {
   auto *module = as_module();
-  CHECK(module);  // Need check here?
+  PADDLE_ENFORCE_NOT_NULL(
+      module,
+      ::common::errors::InvalidArgument(
+          "module is a nullptr. It must not be null"));  // Need check here?
   // TODO(Superjomn) remove the Reference here.
   return ir::Module(&Reference(module));
 }
 
 LoweredFunc Expr::as_lowered_func_ref() const {
   auto *function = as_lowered_func();
-  CHECK(function);
+  PADDLE_ENFORCE_NOT_NULL(function,
+                          ::common::errors::InvalidArgument(
+                              "function is a nullptr. It must not be null"));
   return LoweredFunc(&Reference(function));
 }
 
@@ -231,8 +291,65 @@ bool Expr::is_cmp() const {
 }
 
 const Expr &IrNode::operand(int i) {
-  CHECK_LT(i, operands.size());
+  PADDLE_ENFORCE_LT(
+      i,
+      operands.size(),
+      ::common::errors::InvalidArgument("The index %d is out of range", i));
   return operands[i];
+}
+
+void IrNode::set_type(Type type) { type_ = type; }
+
+void IrNode::replace(Expr old_op, Expr new_op) {
+  std::stringstream ss;
+  ss << "Not Implemented, The node:(" << node_type() << ") has an old_op: ("
+     << old_op.node_type() << ") should be replaced with new_op: ("
+     << new_op.node_type() << ") but not Implemented";
+
+  PADDLE_THROW(::common::errors::Unimplemented(ss.str()));
+}
+
+void IrNode::convert_int32_to_int64() {
+  if (type_ != Int(64))
+    if (type_ != Int(32))
+      PADDLE_ENFORCE_EQ(type_.is_unk(),
+                        true,
+                        ::common::errors::InvalidArgument(
+                            "Current only support convert int32_t "
+                            "to int64_t, but get type is: %s",
+                            type_));
+  type_ = Int(64);
+  for (Expr &operand : operands) {
+    operand->convert_int32_to_int64();
+  }
+}
+
+void TryElevateInt32ToInt64(const std::vector<Expr> &expr_vec) {
+  Type type = expr_vec.front()->type();
+  for (const Expr &expr : expr_vec) {
+    if (expr->type() == Int(64)) {
+      type = Int(64);
+      break;
+    }
+  }
+
+  // Not need Elevate to Int(64)
+  if (type != Int(64)) {
+    return;
+  }
+  for (const Expr &expr : expr_vec) {
+    if (expr->type() != Int(64))
+      if (expr->type() != Int(32))
+        PADDLE_ENFORCE_EQ(expr->type().is_unk(),
+                          true,
+                          ::common::errors::InvalidArgument(
+                              "Current only support convert int32_t "
+                              "to int64_t, but get type is: %s",
+                              expr->type()));
+    if (expr->type() == Int(32)) {
+      expr->convert_int32_to_int64();
+    }
+  }
 }
 
 }  // namespace ir

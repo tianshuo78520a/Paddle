@@ -72,6 +72,9 @@ int32_t Table::Initialize(const TableParameter &config,
     LOG(WARNING) << "Table fs_client initialize failed";
     // return -1;
   }
+  _fs_name = fs_config.uri();
+  _fs_user = fs_config.user();
+  _pass_wd = fs_config.passwd();
   return Initialize();
 }
 
@@ -87,8 +90,8 @@ int32_t Table::InitializeAccessor() {
   auto *accessor =
       CREATE_PSCORE_CLASS(ValueAccessor, _config.accessor().accessor_class());
 
-  if (accessor == NULL) {
-    LOG(ERROR) << "accessor is unregisteg, table_id:" << _config.table_id()
+  if (accessor == nullptr) {
+    LOG(ERROR) << "accessor is unregistered, table_id:" << _config.table_id()
                << ", accessor_name:" << _config.accessor().accessor_class();
     return -1;
   }
@@ -97,7 +100,7 @@ int32_t Table::InitializeAccessor() {
                << ", accessor_name:" << _config.accessor().accessor_class();
     return -1;
   }
-  _value_accesor.reset(accessor);
+  _value_accessor.reset(accessor);
   return 0;
 }
 

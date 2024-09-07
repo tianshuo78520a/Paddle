@@ -45,7 +45,7 @@ class TestIndexSelectOp(OpTest):
         self.inputs = {'X': x_np, 'Index': index_np}
         self.attrs = {'dim': self.dim}
         outer_loop = np.prod(self.x_shape[: self.dim])
-        x_reshape = [outer_loop] + list(self.x_shape[self.dim :])
+        x_reshape = [outer_loop, *self.x_shape[self.dim :]]
         x_np_reshape = np.reshape(x_np, tuple(x_reshape))
         out_list = []
         for i in range(outer_loop):
@@ -67,9 +67,13 @@ class TestIndexSelectOp(OpTest):
 
     def test_check_output(self):
         if self.x_type == np.complex64 or self.x_type == np.complex128:
-            self.check_output(check_prim=False, check_pir=True)
+            self.check_output(
+                check_prim=False, check_pir=True, check_prim_pir=False
+            )
         else:
-            self.check_output(check_prim=True, check_pir=True)
+            self.check_output(
+                check_prim=True, check_pir=True, check_prim_pir=True
+            )
 
     def test_check_grad_normal(self):
         if self.x_type == np.complex64 or self.x_type == np.complex128:
@@ -126,7 +130,7 @@ class TestIndexSelectBF16Op(OpTest):
         self.inputs = {'X': convert_float_to_uint16(x_np), 'Index': index_np}
         self.attrs = {'dim': self.dim}
         outer_loop = np.prod(self.x_shape[: self.dim])
-        x_reshape = [outer_loop] + list(self.x_shape[self.dim :])
+        x_reshape = [outer_loop, *self.x_shape[self.dim :]]
         x_np_reshape = np.reshape(x_np, tuple(x_reshape))
         out_list = []
         for i in range(outer_loop):
@@ -151,7 +155,7 @@ class TestIndexSelectBF16Op(OpTest):
 
     def test_check_output(self):
         place = core.CUDAPlace(0)
-        self.check_output_with_place(place, check_pir=True)
+        self.check_output_with_place(place, check_pir=True, check_prim_pir=True)
 
     def test_check_grad_normal(self):
         place = core.CUDAPlace(0)
@@ -233,8 +237,8 @@ class TestIndexSelectAPI(unittest.TestCase):
         self.input_data()
         # case 1:
         with base.dygraph.guard():
-            x = base.dygraph.to_variable(self.data_x)
-            index = base.dygraph.to_variable(self.data_index)
+            x = paddle.to_tensor(self.data_x)
+            index = paddle.to_tensor(self.data_index)
             z = paddle.index_select(x, index)
             np_z = z.numpy()
         expect_out = np.array(
@@ -244,8 +248,8 @@ class TestIndexSelectAPI(unittest.TestCase):
 
         # case 2:
         with base.dygraph.guard():
-            x = base.dygraph.to_variable(self.data_x)
-            index = base.dygraph.to_variable(self.data_index)
+            x = paddle.to_tensor(self.data_x)
+            index = paddle.to_tensor(self.data_index)
             z = paddle.index_select(x, index, axis=1)
             np_z = z.numpy()
         expect_out = np.array(

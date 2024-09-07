@@ -34,7 +34,7 @@ void SoftmaxCsrKernel(const Context& dev_ctx,
                       SparseCsrTensor* out) {
   PADDLE_ENFORCE_EQ(axis,
                     -1,
-                    phi::errors::Unimplemented(
+                    common::errors::Unimplemented(
                         "SparseCsrTensor only support axis=-1 for softmax, "
                         "which is faster when reading data by row (axis=-1)"));
   EmptyLikeCsrKernel<T, Context>(dev_ctx, x, out);
@@ -160,7 +160,7 @@ void SoftmaxCooCPUKernel(const Context& dev_ctx,
   }
 }
 
-// cpu kerenel
+// cpu kernel
 template <typename T, typename Context>
 void SoftmaxCooKernel(const Context& dev_ctx,
                       const SparseCooTensor& x,

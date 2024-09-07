@@ -27,6 +27,7 @@ from ...utils.magic_methods import (
     UNARY_OPS,
     magic_method_builtin_dispatch,
 )
+from ...utils.paddle_api_config import get_tensor_methods
 from .dispatch_functions import (
     operator_in,
     operator_is_none,
@@ -48,6 +49,7 @@ from .variables import (
     NumpyVariable,
     RangeVariable,
     SliceVariable,
+    SymbolicVariable,
     TupleVariable,
     VariableBase,
     VariableFactory,
@@ -178,6 +180,15 @@ Dispatcher.register(
 )
 
 
+# type
+Dispatcher.register(
+    type,
+    ("ConstantVariable | SymbolicVariable",),
+    lambda var: VariableFactory.from_value(
+        var.get_py_type(), graph=var.graph, tracker=DummyTracker([var])
+    ),
+)
+
 # dict
 Dispatcher.register(
     dict,
@@ -215,7 +226,10 @@ def dispatch_dict(var: ListVariable | TupleVariable):
 
 
 @Dispatcher.register_decorator(dict.fromkeys)
-def dispatch_dict_fromkeys(seq: ListVariable | TupleVariable, default: VariableBase = None):  # type: ignore
+def dispatch_dict_fromkeys(
+    seq: ListVariable | TupleVariable,
+    default: VariableBase = None,  # type: ignore
+):
     if default is None:
         default = ConstantVariable.wrap_literal(None, seq.graph)
     res_dict = {}
@@ -321,6 +335,38 @@ Dispatcher.register(
     ("TupleVariable", "VariableBase"),
     lambda var, value: var.index(value),
 )
+Dispatcher.register(
+    operator.add,
+    ("TupleVariable", "TupleVariable"),
+    lambda var, other: var.concat(other),
+)
+Dispatcher.register(
+    operator.iadd,
+    ("TupleVariable", "TupleVariable"),
+    lambda var, other: var.concat(other),
+)
+
+
+@Dispatcher.register_decorator(operator.eq)
+def dispatch_tuple_eq(lhs: TupleVariable, rhs: TupleVariable):
+    if len(lhs) != len(rhs):
+        return ConstantVariable(False, lhs.graph, DummyTracker([lhs, rhs]))
+    size = len(lhs)
+
+    return ConstantVariable(
+        all(
+            Dispatcher.call(operator.eq, lhs[i], rhs[i]).get_py_value()
+            for i in range(size)
+        ),
+        lhs.graph,
+        DummyTracker([lhs, rhs]),
+    )
+
+
+@Dispatcher.register_decorator(operator.ne)
+def dispatch_tuple_ne(lhs: TupleVariable, rhs: TupleVariable):
+    return Dispatcher.call(operator.eq, lhs, rhs).bool_not()
+
 
 # list
 Dispatcher.register(
@@ -354,7 +400,10 @@ Dispatcher.register(
 )
 Dispatcher.register(
     list.extend,
-    ("ListVariable", "ListVariable | TupleVariable"),
+    (
+        "ListVariable",
+        "ListVariable | TupleVariable | DictVariable | RangeVariable",
+    ),
     lambda var, other: var.extend(other),
 )
 Dispatcher.register(
@@ -413,15 +462,37 @@ Dispatcher.register(
     lambda var, other: var.concat(other),
 )
 Dispatcher.register(
-    operator.add,
-    ("TupleVariable", "TupleVariable"),
-    lambda var, other: var.concat(other),
+    operator.iadd,
+    ("ListVariable", "ListVariable"),
+    lambda var, other: var.inplace_concat(other),
 )
 Dispatcher.register(
     operator.mul,
     ("ListVariable | TupleVariable", "ConstantVariable"),
     lambda var, other: var.repeat(other),
 )
+
+
+@Dispatcher.register_decorator(operator.eq)
+def dispatch_list_eq(lhs: ListVariable, rhs: ListVariable):
+    if len(lhs) != len(rhs):
+        return ConstantVariable(False, lhs.graph, DummyTracker([lhs, rhs]))
+    size = len(lhs)
+
+    return ConstantVariable(
+        all(
+            Dispatcher.call(operator.eq, lhs[i], rhs[i]).get_py_value()
+            for i in range(size)
+        ),
+        lhs.graph,
+        DummyTracker([lhs, rhs]),
+    )
+
+
+@Dispatcher.register_decorator(operator.ne)
+def dispatch_list_ne(lhs: ListVariable, rhs: ListVariable):
+    return Dispatcher.call(operator.eq, lhs, rhs).bool_not()
+
 
 # getattr
 Dispatcher.register(
@@ -575,10 +646,11 @@ Dispatcher.register(
     ("ContainerVariable",),
     lambda var: var.bool(),
 )
+
 Dispatcher.register(
     operator.truth,
     ("ConstantVariable",),
-    lambda var: var.bool(),
+    lambda var: Dispatcher.call(bool, var),
 )
 
 # str
@@ -602,7 +674,12 @@ Dispatcher.register(
 
 
 @Dispatcher.register_decorator(str.startswith)
-def str_startswith(var: ConstantVariable, substr: ConstantVariable, beg: ConstantVariable = None, end: ConstantVariable = None):  # type: ignore
+def str_startswith(
+    var: ConstantVariable,
+    substr: ConstantVariable,
+    beg: ConstantVariable = None,  # type: ignore
+    end: ConstantVariable = None,  # type: ignore
+):
     value = var.get_py_value()
     if end is None:
         end = ConstantVariable(len(value), var.graph, DanglingTracker())
@@ -618,7 +695,12 @@ def str_startswith(var: ConstantVariable, substr: ConstantVariable, beg: Constan
 
 
 @Dispatcher.register_decorator(str.endswith)
-def str_endswith(var: ConstantVariable, substr: ConstantVariable, beg: ConstantVariable = None, end: ConstantVariable = None):  # type: ignore
+def str_endswith(
+    var: ConstantVariable,
+    substr: ConstantVariable,
+    beg: ConstantVariable = None,  # type: ignore
+    end: ConstantVariable = None,  # type: ignore
+):
     value = var.get_py_value()
     if end is None:
         end = ConstantVariable(len(value), var.graph, DanglingTracker())
@@ -782,21 +864,7 @@ def is_not_func(var: VariableBase, other: VariableBase):
 # is None
 Dispatcher.register(
     operator_is_none,
-    ("TensorVariable",),
-    lambda var: ConstantVariable(False, var.graph, DummyTracker([var])),
-)
-
-# is not None
-Dispatcher.register(
-    operator_is_not_none,
-    ("TensorVariable",),
-    lambda var: ConstantVariable(True, var.graph, DummyTracker([var])),
-)
-
-# is None
-Dispatcher.register(
-    operator_is_none,
-    ("VariableBase",),
+    ("ConstantVariable",),
     lambda var: BuiltinVariable(operator.is_, var.graph, DanglingTracker())(
         var, ConstantVariable.wrap_literal(None, var.graph)
     ),
@@ -805,10 +873,24 @@ Dispatcher.register(
 # is not None
 Dispatcher.register(
     operator_is_not_none,
-    ("VariableBase",),
+    ("ConstantVariable",),
     lambda var: BuiltinVariable(operator.is_not, var.graph, DanglingTracker())(
         var, ConstantVariable.wrap_literal(None, var.graph)
     ),
+)
+
+# is None
+Dispatcher.register(
+    operator_is_none,
+    ("VariableBase",),
+    lambda var: ConstantVariable(False, var.graph, DummyTracker([var])),
+)
+
+# is not None
+Dispatcher.register(
+    operator_is_not_none,
+    ("VariableBase",),
+    lambda var: ConstantVariable(True, var.graph, DummyTracker([var])),
 )
 
 
@@ -858,10 +940,11 @@ for binary_fn in BINARY_OPS:
                 binary_fn,
             ),
         )
-# Tensor
+# Tensor and Symbolic
 fallback_tensor_unary_method = {
     int,
     bool,
+    float,
     operator.truth,
 }
 
@@ -895,6 +978,16 @@ for unary_fn in UNARY_OPS:
                 magic_method.name,
             ),
         )
+        Dispatcher.register(
+            unary_fn,
+            ("SymbolicVariable",),
+            partial(
+                lambda magic_name, var: var.graph.call_symbolic_method(
+                    magic_name, var
+                ),
+                magic_method.name,
+            ),
+        )
 for binary_fn in BINARY_OPS:
     for magic_method in magic_method_builtin_dispatch(binary_fn):
         # skip all inplace magic method name, we will dispatch it to non-inplace
@@ -907,7 +1000,7 @@ for binary_fn in BINARY_OPS:
                 binary_fn,
                 (
                     "TensorVariable",
-                    "TensorVariable | ConstantVariable | NumpyVariable",
+                    "TensorVariable | SymbolicVariable | ConstantVariable | NumpyVariable",
                 ),
                 partial(
                     lambda magic_name, var, other: var.graph.call_tensor_method(
@@ -922,7 +1015,8 @@ for binary_fn in BINARY_OPS:
 
                 @Dispatcher.register_decorator(operator.mod)
                 def tensor_mod_dispatcher(
-                    var: ConstantVariable, other: TensorVariable
+                    var: ConstantVariable | SymbolicVariable,
+                    other: TensorVariable,
                 ):
                     if var.get_py_type() is str:
                         raise BreakGraphError(
@@ -934,7 +1028,7 @@ for binary_fn in BINARY_OPS:
                 Dispatcher.register(
                     binary_fn,
                     (
-                        "ConstantVariable | NumpyVariable",
+                        "SymbolicVariable | ConstantVariable | NumpyVariable",
                         "TensorVariable",
                     ),
                     partial(
@@ -944,6 +1038,41 @@ for binary_fn in BINARY_OPS:
                         magic_method.name,
                     ),
                 )
+
+for binary_fn in BINARY_OPS:
+    for magic_method in magic_method_builtin_dispatch(binary_fn):
+        if magic_method.name not in get_tensor_methods():
+            continue
+        # skip all inplace magic method name, we will dispatch it to non-inplace
+        # magic methods
+        if magic_method.is_inplace:
+            continue
+
+        if not magic_method.is_reverse:
+            Dispatcher.register(
+                binary_fn,
+                (
+                    "SymbolicVariable",
+                    "ConstantVariable | SymbolicVariable",
+                ),
+                partial(
+                    lambda magic_name, var, other: var.graph.call_symbolic_method(
+                        magic_name, var, other
+                    ),
+                    magic_method.name,
+                ),
+            )
+        else:
+            Dispatcher.register(
+                binary_fn,
+                ("ConstantVariable", "SymbolicVariable"),
+                partial(
+                    lambda reverse_magic_name, var, other: var.graph.call_symbolic_method(
+                        reverse_magic_name, other, var
+                    ),
+                    magic_method.name,
+                ),
+            )
 
 # Register dispatch for NumpyVariable: fallback !
 for unary_fn in UNARY_OPS:
@@ -971,7 +1100,7 @@ for binary_fn in BINARY_OPS:
             raise FallbackError('Numpy operator need fallback to dygraph')
 
 
-# Register dispatch for DataVariable: directy call and return a wrapped variable.
+# Register dispatch for DataVariable: directly call and return a wrapped variable.
 def data_variable_binary_dispatcher(var, other, operator):
     return VariableFactory.from_value(
         operator(var.get_py_value(), other.get_py_value()),
@@ -1046,7 +1175,11 @@ Dispatcher.register(
 # pow
 # base ** exp % mod
 @Dispatcher.register_decorator(pow)
-def dispatch_pow(base: VariableBase, exp: VariableBase, mod: VariableBase = None):  # type: ignore
+def dispatch_pow(
+    base: VariableBase,
+    exp: VariableBase,
+    mod: VariableBase = None,  # type: ignore
+):
     graph = base.graph
     result = BuiltinVariable(operator.pow, graph, DanglingTracker())(base, exp)
     if exp is not None:
@@ -1068,7 +1201,10 @@ Dispatcher.register(
 
 
 @Dispatcher.register_decorator(sum)
-def dispatch_sum(var: ContainerVariable | TensorVariable, start: VariableBase = None):  # type: ignore
+def dispatch_sum(
+    var: ContainerVariable | TensorVariable,
+    start: VariableBase = None,  # type: ignore
+):
     if start is None:
         start = ConstantVariable.wrap_literal(0, var.graph)
     elements = [

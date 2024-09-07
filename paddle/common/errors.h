@@ -87,7 +87,7 @@ enum ErrorCode {
   EXTERNAL = 12,
 
   // Client specified an unmatched type.
-  // Error type string: "INVALID_TYPE"
+  // Error type string: "InvalidTypeError"
   INVALID_TYPE = 13,
 };
 
@@ -153,6 +153,4 @@ REGISTER_ERROR(InvalidType, ErrorCode::INVALID_TYPE)
 
 namespace phi {
 namespace errors = ::common::errors;
-using ErrorCode = ::common::ErrorCode;
-using ErrorSummary = ::common::ErrorSummary;
 }  // namespace phi

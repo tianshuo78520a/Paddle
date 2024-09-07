@@ -23,14 +23,14 @@
 #include "paddle/fluid/pir/dialect/operator/ir/op_dialect.h"
 #include "paddle/fluid/pir/dialect/operator/utils/op_yaml_info_parser.h"
 #include "paddle/fluid/platform/collective_helper.h"
-#include "paddle/fluid/platform/device_context.h"
+#include "paddle/fluid/platform/profiler/event_tracing.h"
 #include "paddle/phi/core/infermeta_utils.h"
 #include "paddle/phi/core/meta_tensor.h"
+#include "paddle/phi/core/platform/device_context.h"
 #include "paddle/phi/core/type_defs.h"
-
-#include "paddle/pir/core/builtin_attribute.h"
-#include "paddle/pir/core/operation.h"
-#include "paddle/pir/core/value.h"
+#include "paddle/pir/include/core/builtin_attribute.h"
+#include "paddle/pir/include/core/operation.h"
+#include "paddle/pir/include/core/value.h"
 
 #include "paddle/fluid/framework/new_executor/instruction/instruction_util.h"
 namespace paddle {
@@ -38,7 +38,7 @@ namespace framework {
 
 PhiKernelInstruction::PhiKernelInstruction(
     size_t id,
-    const platform::Place& place,
+    const phi::Place& place,
     pir::Operation* op,
     const ValueExecutionInfo* value_exec_info)
     : InstructionBase(id, place), value_exec_info_(value_exec_info) {
@@ -94,7 +94,10 @@ PhiKernelInstruction::PhiKernelInstruction(
     }
     SetEventsToWaitInfo(events_to_wait);
   }
-  VLOG(6) << "finish process dist attributes";
+  VLOG(6) << "finish process dist attributes for " << op_name
+          << " : [execution_stream, stream_priority, scheduling_priority] = ["
+          << GetExecutionStream() << ", " << GetStreamPriority() << ", "
+          << GetSchedulingPriority() << "]";
 
   SetKernelType(AnalyseOpFuncType(op, place));
   VLOG(6) << "finish process analyse kernel type";
@@ -107,10 +110,11 @@ PhiKernelInstruction::PhiKernelInstruction(
       op_info.GetInterfaceImpl<paddle::dialect::OpYamlInfoInterface>();
   PADDLE_ENFORCE_NOT_NULL(
       yaml_interface,
-      phi::errors::PreconditionNotMet(
+      common::errors::PreconditionNotMet(
           "can not find OpYamlInfoInterface from [%s]", phi_op_name_));
   paddle::dialect::OpYamlInfoParser yaml_info_parser(
-      yaml_interface->get_op_info_(), paddle::dialect::IsLegacyOp(op_name));
+      yaml_interface->get_op_info_(op_name),
+      paddle::dialect::IsLegacyOp(op_name));
   VLOG(6) << "finish process yaml_info_parser";
 
   if (infer_meta_interface_) {
@@ -131,10 +135,21 @@ PhiKernelInstruction::PhiKernelInstruction(
                         .data();
   auto kernel_result = phi::KernelFactory::Instance().SelectKernelOrThrowError(
       kernel_name, kernel_key);
+  kernel_name_ = kernel_name;
   phi_kernel_ = new phi::Kernel(kernel_result.kernel);
   PADDLE_ENFORCE_EQ(
       phi_kernel_->IsValid(), true, "not found kernel for [%s]", kernel_name);
   VLOG(6) << "finish process select kernel";
+
+  phi::DeviceContext* dev_ctx =
+      ParseDeviceContext(op,
+                         phi::DeviceContextPool::Instance().Get(
+                             phi::TransToPhiPlace(kernel_key.backend())),
+                         place,
+                         GetExecutionStream(),
+                         GetStreamPriority());
+  SetDeviceContext(dev_ctx);
+  VLOG(6) << "finish process device context";
 
   BuildPhiContext<phi::KernelContext,
                   const phi::TensorBase*,
@@ -144,19 +159,12 @@ PhiKernelInstruction::PhiKernelInstruction(
                   true>(
       op, *value_exec_info_, yaml_info_parser, &kernel_context_);
 
-  kernel_context_.SetDeviceContext(phi::DeviceContextPool::Instance().Get(
-      phi::TransToPhiPlace(kernel_key.backend())));
+  kernel_context_.SetDeviceContext(dev_ctx);
   VLOG(6) << "finish process kernel context";
-
-  SetDeviceContext(
-      ParseDeviceContext(op,
-                         phi::DeviceContextPool::Instance().Get(
-                             phi::TransToPhiPlace(kernel_key.backend())),
-                         place,
-                         GetExecutionStream(),
-                         GetStreamPriority()));
-  VLOG(6) << "finish process device context";
-
+  if (op->attributes().count("is_inplace") != 0 &&
+      op->attributes().at("is_inplace").dyn_cast<pir::BoolAttribute>().data()) {
+    HandleForInplaceOp(op, value_exec_info_, this);
+  }
   InitInputsOutputsIds(op, *value_exec_info);
   VLOG(6) << "finish process inputs outputs index";
 
@@ -169,19 +177,29 @@ PhiKernelInstruction::PhiKernelInstruction(
   VLOG(6) << "finish process no need buffer";
 }
 
-PhiKernelInstruction::~PhiKernelInstruction() {
-  if (phi_kernel_ != nullptr) {
-    delete phi_kernel_;
-  }
-}
+PhiKernelInstruction::~PhiKernelInstruction() { delete phi_kernel_; }
 
 void PhiKernelInstruction::Run() {
+  VLOG(6) << "Begin run op " << phi_op_name_ << " infer meta.";
   if (infer_meta_interface_) {
+    phi::RecordEvent record_event("PhiKernelInstruction::infermeta",
+                                  phi::TracerEventType::UserDefined,
+                                  1);
     infer_meta_interface_->infer_meta_(&(infer_meta_context_));
   }
-  VLOG(6) << "Run op " << phi_op_name_ << " infer meta.";
-  (*(phi_kernel_))(&(kernel_context_));
-  VLOG(6) << "Run op " << phi_op_name_ << " kernel.";
+  VLOG(6) << "End run op " << phi_op_name_ << " infer meta.";
+  for (auto& pair : this->InplaceInfo()) {
+    ShareVarBuffer(pair.first, pair.second);
+  }
+  VLOG(6) << "Begin run op " << phi_op_name_ << " kernel.";
+  {
+    phi::RecordEvent record_event(kernel_name_ + " kernel launch",
+                                  phi::TracerEventType::StaticKernelLaunch,
+                                  1);
+    (*(phi_kernel_))(&(kernel_context_));
+  }
+
+  VLOG(6) << "End run op " << phi_op_name_ << " kernel.";
 }
 
 }  // namespace framework

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import unittest
 
 import numpy as np
@@ -96,7 +97,13 @@ class TestRealAPI(unittest.TestCase):
         # prepare test attrs
         self.api = "real"
         self.dtypes = ["complex64", "complex128"]
-        self.places = [paddle.CPUPlace()]
+        self.places = []
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not paddle.is_compiled_with_cuda()
+        ):
+            self.places.append(paddle.CPUPlace())
         if paddle.is_compiled_with_cuda():
             self.places.append(paddle.CUDAPlace(0))
         self._shape = [2, 20, 2, 3]
@@ -140,18 +147,23 @@ class TestRealAPI(unittest.TestCase):
                     np.testing.assert_array_equal(np_res, res_t)
 
     def test_name_argument(self):
-        with static.program_guard(static.Program()):
-            x = static.data(name="x", shape=self._shape, dtype=self.dtypes[0])
-            out = paddle_apis[self.api](x, name="real_res")
-            self.assertTrue("real_res" in out.name)
+        with paddle.pir_utils.OldIrGuard():
+            with static.program_guard(static.Program()):
+                x = static.data(
+                    name="x", shape=self._shape, dtype=self.dtypes[0]
+                )
+                out = paddle_apis[self.api](x, name="real_res")
+                self.assertTrue("real_res" in out.name)
 
-    def test_dtype_error(self):
+    @test_with_pir_api
+    def test_dtype_static_error(self):
         # in static graph mode
         with self.assertRaises(TypeError):
             with static.program_guard(static.Program()):
                 x = static.data(name="x", shape=self._shape, dtype="float32")
                 out = paddle_apis[self.api](x, name="real_res")
 
+    def test_dtype_dygraph_error(self):
         # in dynamic mode
         with self.assertRaises(RuntimeError):
             with base.dygraph.guard():
@@ -167,7 +179,13 @@ class TestImagAPI(TestRealAPI):
         # prepare test attrs
         self.api = "imag"
         self.dtypes = ["complex64", "complex128"]
-        self.places = [paddle.CPUPlace()]
+        self.places = []
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not paddle.is_compiled_with_cuda()
+        ):
+            self.places.append(paddle.CPUPlace())
         if paddle.is_compiled_with_cuda():
             self.places.append(paddle.CUDAPlace(0))
         self._shape = [2, 20, 2, 3]

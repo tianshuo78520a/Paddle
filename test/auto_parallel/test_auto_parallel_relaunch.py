@@ -76,7 +76,7 @@ cluster_json = """
 }
 """
 
-mapping_josn = """
+mapping_json = """
 [
   {
     "hostname": "machine1",
@@ -111,9 +111,9 @@ class TestAutoParallelReLaunch(unittest.TestCase):
         with open(cluster_json_path, "w") as cluster_json_file:
             json.dump(cluster_json_object, cluster_json_file)
 
-        mapping_josn_object = json.loads(mapping_josn)
-        with open(mapping_json_path, "w") as mapping_josn_file:
-            json.dump(mapping_josn_object, mapping_josn_file)
+        mapping_json_object = json.loads(mapping_json)
+        with open(mapping_json_path, "w") as mapping_json_file:
+            json.dump(mapping_json_object, mapping_json_file)
 
         file_dir = os.path.dirname(os.path.abspath(__file__))
         launch_model_path = os.path.join(
@@ -125,23 +125,22 @@ class TestAutoParallelReLaunch(unittest.TestCase):
         else:
             coverage_args = []
 
-        cmd = (
-            [sys.executable, "-u"]
-            + coverage_args
-            + [
-                "-m",
-                "paddle.distributed.launch",
-                "--log_dir",
-                self.temp_dir.name,
-                "--cluster_topo_path",
-                cluster_json_path,
-                "--rank_mapping_path",
-                mapping_json_path,
-                "--enable_auto_mapping",
-                "True",
-                launch_model_path,
-            ]
-        )
+        cmd = [
+            sys.executable,
+            "-u",
+            *coverage_args,
+            "-m",
+            "paddle.distributed.launch",
+            "--log_dir",
+            self.temp_dir.name,
+            "--cluster_topo_path",
+            cluster_json_path,
+            "--rank_mapping_path",
+            mapping_json_path,
+            "--enable_auto_mapping",
+            "True",
+            launch_model_path,
+        ]
         process = subprocess.Popen(cmd)
         process.wait()
         self.assertEqual(process.returncode, 0)

@@ -35,8 +35,8 @@ class TestSetStaticOpArgPreCastHook(Dy2StTestBase):
 
         with static_guard():
             with self.assertRaisesRegex(
-                ValueError,
-                r"abs\(\): argument \(position 1\) must be OpResult, but got Tensor",
+                TypeError,
+                r"abs\(\): argument \(position 1\) must be Value, but got Tensor",
             ):
                 paddle.abs(eager_tensor)
 
@@ -53,7 +53,7 @@ class NetWithEagerTensor(paddle.nn.Layer):
     # at transform time.
     @paddle.jit.not_to_static
     def forward_impl(self, x):
-        return paddle.concat([x] + self.extra_inputs, axis=0)
+        return paddle.concat([x, *self.extra_inputs], axis=0)
 
     def forward(self, x):
         return self.forward_impl(x)

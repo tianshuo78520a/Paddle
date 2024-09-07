@@ -80,7 +80,7 @@ void MaskedSelectGradKernel(const Context& dev_ctx,
   PADDLE_ENFORCE_EQ(
       index,
       out_grad_numel,
-      phi::errors::InvalidArgument(
+      common::errors::InvalidArgument(
           "The dim size of input and x_grad in OP(masked_selected_grad) "
           "must be equal, but got mask with ones:(%ld), out_grad numel: "
           "(%ld). Please check input "
@@ -100,7 +100,15 @@ PD_REGISTER_KERNEL(masked_select_grad,
                    CPU,
                    ALL_LAYOUT,
                    phi::MaskedSelectGradKernel,
+                   bool,
                    float,
                    double,
                    int,
-                   int64_t) {}
+                   int8_t,
+                   int64_t,
+                   int16_t,
+                   uint8_t,
+                   phi::dtype::float16,
+                   phi::dtype::bfloat16,
+                   phi::dtype::complex<float>,
+                   phi::dtype::complex<double>) {}

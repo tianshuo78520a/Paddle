@@ -23,10 +23,10 @@ from paddle.base import core
 
 @unittest.skipIf(
     not core.is_compiled_with_cuda(),
-    "core is not complied with CUDA",
+    "core is not compiled with CUDA",
 )
 class TestFusedDropoutAdd(unittest.TestCase):
-    def _test_fused_dropout_add(self):
+    def test_fused_dropout_add(self):
         with paddle.pir_utils.IrGuard():
             main_program = paddle.static.Program()
             with paddle.static.program_guard(main_program):
@@ -41,8 +41,8 @@ class TestFusedDropoutAdd(unittest.TestCase):
                 self.assertTrue('pd_op.add' in op_names)
                 pm = paddle.pir.PassManager()
                 pm.add_pass(
-                    'fused_dropout_add_pass'
-                )  # apply pass to elimitate dead code
+                    'fused_dropout_add_pass', {}
+                )  # apply pass to eliminate dead code
                 pm.run(main_program)
                 op_names = [op.name() for op in main_program.global_block().ops]
                 self.assertTrue('pd_op.fused_dropout_add' in op_names)
@@ -90,8 +90,8 @@ class TestFusedDropoutAdd(unittest.TestCase):
                 )
                 pm = paddle.pir.PassManager()
                 pm.add_pass(
-                    'fused_dropout_add_pass'
-                )  # apply pass to elimitate dead code
+                    'fused_dropout_add_pass', {}
+                )  # apply pass to eliminate dead code
                 pm.run(main_program)
                 op_names = [op.name() for op in main_program.global_block().ops]
                 self.assertTrue(

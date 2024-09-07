@@ -51,11 +51,11 @@ void LapackSvd(
                            iwork.data(),
                            &info);
   if (info < 0) {
-    PADDLE_THROW(phi::errors::InvalidArgument(
+    PADDLE_THROW(common::errors::InvalidArgument(
         "This %s-th argument has an illegal value", info));
   }
   if (info > 0) {
-    PADDLE_THROW(phi::errors::InvalidArgument(
+    PADDLE_THROW(common::errors::InvalidArgument(
         "DBDSDC/SBDSDC did not converge, updating process failed. May be you "
         "passes a invalid matrix."));
   }
@@ -121,7 +121,7 @@ void SvdKernel(const Context& dev_ctx,
   BatchSvd<T>(x_data, U_out, VH_out, S_out, rows, cols, batches, full);
   /* let C[m, n] as a col major matrix with m rows and n cols.
    * let R[m, n] is row major matrix with m rows and n cols.
-   * then we have: R[m,n] = C[m, n].resize((n,m)).tranpose_last_two()
+   * then we have: R[m,n] = C[m, n].resize((n,m)).transpose_last_two()
    * */
   auto col_major_to_row_major = [&dev_ctx](DenseTensor* out) {
     auto origin_dim = out->dims();

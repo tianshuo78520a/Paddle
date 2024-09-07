@@ -14,8 +14,8 @@
 
 #pragma once
 
+#include "paddle/common/hostdevice.h"
 #include "paddle/phi/common/amp_type_traits.h"
-#include "paddle/phi/core/hostdevice.h"
 #include "paddle/phi/kernels/amp_kernel.h"
 #include "paddle/phi/kernels/full_kernel.h"
 
@@ -117,10 +117,10 @@ void UpdateLossScalingKernel(const Context& dev_ctx,
                              DenseTensor* out_bad_steps) {
   using MPDType = typename phi::dtype::MPTypeTrait<T>::Type;
 
-  PADDLE_ENFORCE_EQ(
-      found_infinite.numel(),
-      1,
-      phi::errors::InvalidArgument("FoundInfinite must has only one element."));
+  PADDLE_ENFORCE_EQ(found_infinite.numel(),
+                    1,
+                    common::errors::InvalidArgument(
+                        "FoundInfinite must has only one element."));
   const bool* found_inf_data = found_infinite.data<bool>();
   bool is_found_inf_on_cpu =
       found_infinite.place().GetType() == AllocationType::CPU;

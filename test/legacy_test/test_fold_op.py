@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import unittest
 
 import numpy as np
@@ -20,6 +21,7 @@ from op_test import OpTest
 import paddle
 from paddle import base
 from paddle.base import core
+from paddle.pir_utils import test_with_pir_api
 
 paddle.enable_static()
 
@@ -133,10 +135,10 @@ class TestFoldOp(OpTest):
         self.set_data()
 
     def test_check_output(self):
-        self.check_output()
+        self.check_output(check_pir=True)
 
     def test_check_grad(self):
-        self.check_grad(['X'], 'Y')
+        self.check_grad(['X'], 'Y', check_pir=True)
 
 
 class TestFold_Complex64(TestFoldOp):
@@ -170,7 +172,13 @@ class TestFoldAPI(TestFoldOp):
         self.op_type = 'fold'
         self.python_api = paddle.nn.functional.fold
         self.set_data()
-        self.places = [base.CPUPlace()]
+        self.places = []
+        if (
+            os.environ.get('FLAGS_CI_both_cpu_and_gpu', 'False').lower()
+            in ['1', 'true', 'on']
+            or not core.is_compiled_with_cuda()
+        ):
+            self.places.append(base.CPUPlace())
         if core.is_compiled_with_cuda():
             self.places.append(base.CUDAPlace(0))
 
@@ -190,6 +198,7 @@ class TestFoldAPI(TestFoldOp):
 
 
 class TestFoldOpError(unittest.TestCase):
+    @test_with_pir_api
     def test_errors(self):
         from paddle.base.framework import Program, program_guard
         from paddle.nn.functional import fold

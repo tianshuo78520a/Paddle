@@ -23,7 +23,7 @@ limitations under the License. */
 
 namespace phi {
 
-struct MetaConfig {
+struct TEST_API MetaConfig {
   bool is_runtime{true};
   bool is_run_mkldnn_kernel{false};
   MetaConfig() = default;
@@ -34,7 +34,7 @@ struct MetaConfig {
         is_run_mkldnn_kernel(is_run_mkldnn_kernel) {}  // NOLINT
 };
 
-class MetaTensor {
+class TEST_API MetaTensor {
  public:
   typedef void (*unspecified_bool_type)();
 
@@ -64,6 +64,7 @@ class MetaTensor {
 
   virtual int64_t numel() const;
   virtual DDim dims() const;
+  size_t size() const;  // Returns the number of tensors in TensorArray.
   DDim dims(int64_t index) const;
   virtual DataType dtype() const;
   virtual DataLayout layout() const;

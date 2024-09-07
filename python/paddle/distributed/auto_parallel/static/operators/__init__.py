@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License
-import os  # noqa: F401
+import os
 
 from . import (  # noqa: F401
     dist_assign,
@@ -21,12 +21,15 @@ from . import (  # noqa: F401
     dist_dropout,
     dist_eltwise,
     dist_embedding,
+    dist_expand_as,
     dist_fill_constant_batch_size_like,
     dist_flash_attn,
     dist_fused_attention,
     dist_fused_dropout_add,
     dist_fused_feedforward,
+    dist_fused_rms_norm,
     dist_fused_rope,
+    dist_gather_nd,
     dist_layer_norm,
     dist_matmul,
     dist_pnorm,
@@ -37,6 +40,9 @@ from . import (  # noqa: F401
     dist_slice,
     dist_softmax,
     dist_split,
+    dist_stack,
+    dist_strided_slice,
+    dist_tile,
     dist_transpose,
     dist_unsqueeze2,
     dist_update_loss_scaling,

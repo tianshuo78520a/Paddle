@@ -33,6 +33,9 @@ class DeviceContext;
 namespace distributed {
 class ProcessMesh;
 
+std::vector<int64_t> GetUnionProcessIds(std::vector<int64_t> in_process_ids,
+                                        std::vector<int64_t> out_process_ids);
+
 bool IsCurRankInMesh(const ProcessMesh& process_mesh);
 
 bool NeedComputationClipForPP(
@@ -71,6 +74,10 @@ std::vector<int64_t> BalancedSplit(int64_t total_nums, int64_t num_of_pieces);
 CommContext* CreateOrGetCommContext(const DeviceContext& dev_ctx,
                                     const std::vector<int64_t>& process_ids);
 
+phi::DDim InferShapeForReshardFromReplicate(
+    const std::shared_ptr<phi::DenseTensor>& global_value,
+    const TensorDistAttr& dist_attr);
+
 #if defined(PADDLE_WITH_CUDA) || defined(PADDLE_WITH_HIP)
 #define RESHARD_FUNCTOR_IMPL(dev_ctx, fn_name, dtype, ...)            \
   do {                                                                \
@@ -89,7 +96,7 @@ CommContext* CreateOrGetCommContext(const DeviceContext& dev_ctx,
                             __VA_ARGS__);                             \
           }));                                                        \
     } else {                                                          \
-      PADDLE_THROW(phi::errors::Unimplemented(                        \
+      PADDLE_THROW(common::errors::Unimplemented(                     \
           "The %s in reshard only supported on CPU and GPU for now.", \
           #fn_name));                                                 \
     }                                                                 \
@@ -105,7 +112,7 @@ CommContext* CreateOrGetCommContext(const DeviceContext& dev_ctx,
                             __VA_ARGS__);                                 \
           }));                                                            \
     } else {                                                              \
-      PADDLE_THROW(phi::errors::Unimplemented(                            \
+      PADDLE_THROW(common::errors::Unimplemented(                         \
           "The %s in reshard only supported on CPU for now.", #fn_name)); \
     }                                                                     \
   } while (0)
@@ -135,7 +142,7 @@ CommContext* CreateOrGetCommContext(const DeviceContext& dev_ctx,
               << "`without DType in Resharding on GPU.";              \
       fn_name(static_cast<const GPUContext&>(*dev_ctx), __VA_ARGS__); \
     } else {                                                          \
-      PADDLE_THROW(phi::errors::Unimplemented(                        \
+      PADDLE_THROW(common::errors::Unimplemented(                     \
           "The %s in reshard only supported on CPU and GPU for now.", \
           #fn_name));                                                 \
     }                                                                 \
@@ -148,7 +155,7 @@ CommContext* CreateOrGetCommContext(const DeviceContext& dev_ctx,
               << "`without DType in Resharding on CPU.";                  \
       fn_name(static_cast<const CPUContext&>(*dev_ctx), __VA_ARGS__);     \
     } else {                                                              \
-      PADDLE_THROW(phi::errors::Unimplemented(                            \
+      PADDLE_THROW(common::errors::Unimplemented(                         \
           "The %s in reshard only supported on CPU for now.", #fn_name)); \
     }                                                                     \
   } while (0)
@@ -160,6 +167,9 @@ CommContext* CreateOrGetCommContext(const DeviceContext& dev_ctx,
       return false;                     \
     }                                   \
   } while (0)
+
+std::vector<ProcessMesh> GetSubMeshes(const ProcessMesh& process_mesh);
+bool IsSubMesh(const ProcessMesh& global_mesh, const ProcessMesh& sub_mesh);
 
 }  // namespace distributed
 }  // namespace phi

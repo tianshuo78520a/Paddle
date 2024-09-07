@@ -62,12 +62,12 @@ class DistributedReshape2(DistributedOperatorImplContainer):
 
         # step2: infer spmd
         rule = get_phi_spmd_rule("reshape")
-        # tensor order following order in PHI defition
+        # tensor order following order in PHI definition
         fw_results = rule.infer_forward(x_spec, shape)
         bw_results = rule.infer_backward(x_spec, output_spec, shape)
 
         # step3: update dist_attr
-        # tensor order following order in PHI defition
+        # tensor order following order in PHI definition
         changed = update_op_dims_mapping(
             dist_op, [x_name], [out_name], fw_results, bw_results
         )
@@ -295,7 +295,7 @@ class DistributedReshapeImpl0(DistributedOperatorImpl):
         op_dist_attr = ctx.get_op_dist_attr_for_program(src_op)
         assert (
             op_dist_attr is not None
-        ), f"backward op [{str(src_op)}] don't have dist attribute !"
+        ), f"backward op [{src_op}] don't have dist attribute !"
 
         # check validation of inputs / outputs
         for input_name in src_op.desc.input_names():
@@ -551,7 +551,7 @@ class DistributedReshapeImpl1(DistributedOperatorImpl):
         op_dist_attr = ctx.get_op_dist_attr_for_program(src_op)
         assert (
             op_dist_attr is not None
-        ), f"backward op [{str(src_op)}] don't have dist attribute !"
+        ), f"backward op [{src_op}] don't have dist attribute !"
 
         # check validation of inputs / outputs
         for input_name in src_op.desc.input_names():
@@ -800,7 +800,7 @@ class DistributedReshapeImpl2(DistributedOperatorImpl):
         op_dist_attr = ctx.get_op_dist_attr_for_program(src_op)
         assert (
             op_dist_attr is not None
-        ), f"backward op [{str(src_op)}] don't have dist attribute !"
+        ), f"backward op [{src_op}] don't have dist attribute !"
 
         # check validation of inputs / outputs
         for input_name in src_op.desc.input_names():

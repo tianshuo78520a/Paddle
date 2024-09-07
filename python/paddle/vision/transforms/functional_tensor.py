@@ -21,21 +21,20 @@ import paddle
 import paddle.nn.functional as F
 
 from ...base.framework import Variable
+from ...base.libpaddle.pir import Value
 
 __all__ = []
 
 
 def _assert_image_tensor(img, data_format):
     if (
-        not isinstance(img, (paddle.Tensor, Variable))
+        not isinstance(img, (paddle.Tensor, Variable, Value))
         or img.ndim < 3
         or img.ndim > 4
         or data_format.lower() not in ('chw', 'hwc')
     ):
         raise RuntimeError(
-            'not support [type={}, ndim={}, data_format={}] paddle image'.format(
-                type(img), img.ndim, data_format
-            )
+            f'not support [type={type(img)}, ndim={img.ndim}, data_format={data_format}] paddle image'
         )
 
 
@@ -186,8 +185,8 @@ def to_grayscale(img, num_output_channels=1, data_format='CHW'):
     """Converts image to grayscale version of image.
 
     Args:
-        img (paddel.Tensor): Image to be converted to grayscale.
-        num_output_channels (int, optionl[1, 3]):
+        img (paddle.Tensor): Image to be converted to grayscale.
+        num_output_channels (int, optional[1, 3]):
             if num_output_channels = 1 : returned image is single channel
             if num_output_channels = 3 : returned image is 3 channel
         data_format (str, optional): Data format of img, should be 'HWC' or
@@ -585,7 +584,7 @@ def hflip(img, data_format='CHW'):
             'CHW'. Default: 'CHW'.
 
     Returns:
-        paddle.Tensor:  Horizontall flipped image.
+        paddle.Tensor:  Horizontally flipped image.
 
     """
     _assert_image_tensor(img, data_format)

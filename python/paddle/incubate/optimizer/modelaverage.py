@@ -11,16 +11,30 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import paddle
 from paddle import _C_ops
 from paddle.base import framework
 from paddle.base.dygraph import base as imperative_base
-from paddle.base.framework import Program
 from paddle.base.layer_helper import LayerHelper
 from paddle.base.wrapped_decorator import signature_safe_contextmanager
-from paddle.framework import in_dynamic_mode
+from paddle.framework import (
+    in_dynamic_mode,
+    in_dynamic_or_pir_mode,
+    in_pir_mode,
+)
 from paddle.optimizer import Optimizer
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Sequence
+
+    from paddle import Tensor
+    from paddle.optimizer.optimizer import _ParameterConfig
+    from paddle.static import Executor, Program
+
 
 __all__ = []
 
@@ -85,7 +99,7 @@ class ModelAverage(Optimizer):
             >>> CLASS_NUM = 10
 
             >>> # define a random dataset
-            >>> class RandomDataset(paddle.io.Dataset):
+            >>> class RandomDataset(paddle.io.Dataset): # type: ignore[type-arg]
             ...     def __init__(self, num_samples):
             ...         self.num_samples = num_samples
             ...     def __getitem__(self, idx):
@@ -160,20 +174,28 @@ class ModelAverage(Optimizer):
             >>> with model_average.apply(need_restore=False):
             ...     evaluate(layer, eval_loader, loss_fn)
 
-            >>> print("\nEvaluate With Restored Paramters")
+            >>> print("\nEvaluate With Restored Parameters")
             >>> model_average.restore()
             >>> evaluate(layer, eval_loader, loss_fn)
 
     """
 
+    helper: LayerHelper
+    average_window: float
+    min_average_window: int
+    max_average_window: int
+    type: str
+    apply_program: Program
+    restore_program: Program
+
     def __init__(
         self,
-        average_window_rate,
-        parameters=None,
-        min_average_window=10000,
-        max_average_window=10000,
-        name=None,
-    ):
+        average_window_rate: float,
+        parameters: Sequence[Tensor] | Sequence[_ParameterConfig] | None = None,
+        min_average_window: int = 10000,
+        max_average_window: int = 10000,
+        name: str | None = None,
+    ) -> None:
         super().__init__(
             learning_rate=0.0,
             parameters=parameters,
@@ -189,7 +211,7 @@ class ModelAverage(Optimizer):
         self.type = "average_accumulates"
 
         if not in_dynamic_mode():
-            global_block = framework.default_main_program().global_block()
+            global_block = paddle.static.default_main_program().global_block()
             all_parameters = (
                 parameters if parameters else global_block.all_parameters()
             )
@@ -197,19 +219,19 @@ class ModelAverage(Optimizer):
             self._create_accumulators(global_block, all_parameters)
             for param in all_parameters:
                 self._append_optimize_op(global_block, [param, None])
-            self.apply_program = Program()
+            self.apply_program = paddle.static.Program()
             block = self.apply_program.global_block()
-            with framework.program_guard(main_program=self.apply_program):
+            with paddle.static.program_guard(main_program=self.apply_program):
                 for param in all_parameters:
                     self._add_average_apply_op(block, param)
-            self.restore_program = Program()
+            self.restore_program = paddle.static.Program()
             block = self.restore_program.global_block()
-            with framework.program_guard(main_program=self.restore_program):
+            with paddle.static.program_guard(main_program=self.restore_program):
                 for param in all_parameters:
                     self._add_average_restore_op(block, param)
 
     def _create_accumulators(self, block, parameters):
-        assert isinstance(block, framework.Block)
+        assert isinstance(block, (framework.Block, paddle.pir.Block))
 
         for param in parameters:
             self._add_accumulator('sum_1', param)
@@ -227,7 +249,7 @@ class ModelAverage(Optimizer):
             )
 
     def _append_optimize_op(self, block, param_and_grad):
-        assert isinstance(block, framework.Block)
+        assert isinstance(block, (framework.Block, paddle.pir.Block))
 
         sum_1 = self._get_accumulator('sum_1', param_and_grad[0])
         sum_2 = self._get_accumulator('sum_2', param_and_grad[0])
@@ -240,7 +262,7 @@ class ModelAverage(Optimizer):
         )
         num_updates = self._get_accumulator('num_updates', param_and_grad[0])
 
-        if in_dynamic_mode():
+        if in_dynamic_or_pir_mode():
             _, _, _, _, _, _ = _C_ops.average_accumulates_(
                 param_and_grad[0],
                 sum_1,
@@ -293,8 +315,12 @@ class ModelAverage(Optimizer):
 
     @imperative_base.no_grad
     def minimize(
-        self, loss, startup_program=None, parameters=None, no_grad_set=None
-    ):
+        self,
+        loss: Tensor,
+        startup_program: Program | None = None,
+        parameters: list[Tensor] | None = None,
+        no_grad_set: set[Tensor] | set[str] | None = None,
+    ) -> None:
         """
         Add operations to minimize ``loss`` by updating ``parameters``.
 
@@ -347,7 +373,7 @@ class ModelAverage(Optimizer):
 
     @framework.dygraph_only
     @imperative_base.no_grad
-    def step(self):
+    def step(self) -> None:
         """
         Execute the optimizer and update parameters once.
 
@@ -392,7 +418,9 @@ class ModelAverage(Optimizer):
 
     @signature_safe_contextmanager
     @imperative_base.no_grad
-    def apply(self, executor=None, need_restore=True):
+    def apply(
+        self, executor: Executor | None = None, need_restore: bool = True
+    ) -> Generator[None, None, None]:
         """
         Apply the average of the cumulative ``Parameter`` to the parameters of the current model.
 
@@ -471,7 +499,7 @@ class ModelAverage(Optimizer):
                 self.restore(executor)
 
     @imperative_base.no_grad
-    def restore(self, executor=None):
+    def restore(self, executor: Executor | None = None) -> None:
         """
         Restore ``Parameter`` values of current model.
 
@@ -524,17 +552,49 @@ class ModelAverage(Optimizer):
         executor.run(self.restore_program)
 
     def _add_average_apply_op(self, block, param):
-        param = block._clone_variable(param)
-        grad = block._clone_variable(self._get_accumulator('restore', param))
-        sum_1 = block._clone_variable(self._get_accumulator('sum_1', param))
-        sum_2 = block._clone_variable(self._get_accumulator('sum_2', param))
-        sum_3 = block._clone_variable(self._get_accumulator('sum_3', param))
-        num_accumulates = block._clone_variable(
-            self._get_accumulator('num_accumulates', param)
-        )
-        old_num_accumulates = block._clone_variable(
-            self._get_accumulator('old_num_accumulates', param)
-        )
+        if in_pir_mode():
+            target_program = paddle.static.default_main_program()
+            param = paddle.pir.core._get_parameter(target_program, param)
+            restore_value = self._get_accumulator('restore', param)
+            grad = paddle.pir.core._get_persistable_value(
+                target_program, restore_value
+            )
+            sum_1 = self._get_accumulator('sum_1', param)
+            sum_1 = paddle.pir.core._get_persistable_value(
+                target_program, sum_1
+            )
+            sum_2 = self._get_accumulator('sum_2', param)
+            sum_2 = paddle.pir.core._get_persistable_value(
+                target_program, sum_2
+            )
+            sum_3 = self._get_accumulator('sum_3', param)
+            sum_3 = paddle.pir.core._get_persistable_value(
+                target_program, sum_3
+            )
+            num_accumulates = self._get_accumulator('num_accumulates', param)
+            num_accumulates = paddle.pir.core._get_persistable_value(
+                target_program, num_accumulates
+            )
+            old_num_accumulates = self._get_accumulator(
+                'old_num_accumulates', param
+            )
+            old_num_accumulates = paddle.pir.core._get_persistable_value(
+                target_program, old_num_accumulates
+            )
+        else:
+            param = block._clone_variable(param)
+            grad = block._clone_variable(
+                self._get_accumulator('restore', param)
+            )
+            sum_1 = block._clone_variable(self._get_accumulator('sum_1', param))
+            sum_2 = block._clone_variable(self._get_accumulator('sum_2', param))
+            sum_3 = block._clone_variable(self._get_accumulator('sum_3', param))
+            num_accumulates = block._clone_variable(
+                self._get_accumulator('num_accumulates', param)
+            )
+            old_num_accumulates = block._clone_variable(
+                self._get_accumulator('old_num_accumulates', param)
+            )
         # backup param value to grad
         paddle.assign(param, output=grad)
         # param = (sum_1 + sum_2 + sum_3) / (num_accumulates + old_num_accumulates)
@@ -546,9 +606,20 @@ class ModelAverage(Optimizer):
         sum = paddle.cast(
             x=sum, dtype='float32' if self._dtype is None else self._dtype
         )
-        paddle.tensor.ops._elementwise_div(x=sum, y=tmp, out=param)
+        divide_out = paddle.divide(x=sum, y=tmp)
+        paddle.assign(divide_out, output=param)
 
     def _add_average_restore_op(self, block, param):
-        param = block._clone_variable(param)
-        grad = block._clone_variable(self._get_accumulator('restore', param))
+        if in_pir_mode():
+            target_program = paddle.static.default_main_program()
+            param = paddle.pir.core._get_parameter(target_program, param)
+            restore_value = self._get_accumulator('restore', param)
+            grad = paddle.pir.core._get_persistable_value(
+                target_program, restore_value
+            )
+        else:
+            param = block._clone_variable(param)
+            grad = block._clone_variable(
+                self._get_accumulator('restore', param)
+            )
         paddle.assign(grad, output=param)

@@ -52,9 +52,11 @@ class TestFunctionalRReluAPI(unittest.TestCase):
         self.upper_1 = 0.33
 
         self.places = [
-            base.CUDAPlace(0)
-            if core.is_compiled_with_cuda()
-            else base.CPUPlace()
+            (
+                base.CUDAPlace(0)
+                if core.is_compiled_with_cuda()
+                else base.CPUPlace()
+            )
         ]
 
     @test_with_pir_api
@@ -271,6 +273,7 @@ class TestFunctionalRReluAPI(unittest.TestCase):
             )
             paddle.enable_static()
 
+    @test_with_pir_api
     def test_error_functional(self):
         paddle.enable_static()
         with paddle.static.program_guard(paddle.static.Program()):

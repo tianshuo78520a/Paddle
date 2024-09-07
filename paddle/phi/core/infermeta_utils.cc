@@ -126,7 +126,7 @@ const AttrType& InferMetaContext::AttrAt(size_t idx) const {
   try {
     return paddle::get<AttrType>(attrs_.at(idx));
   } catch (paddle::bad_variant_access const& e) {
-    PADDLE_THROW(phi::errors::InvalidArgument(
+    PADDLE_THROW(common::errors::InvalidArgument(
         "Attribute cast error in InferMeta Context, the expected attribute "
         "type is `%s`.",
         std::type_index(typeid(AttrType)).name()));
@@ -153,7 +153,7 @@ template const std::vector<std::string>& InferMetaContext::AttrAt(
 template const Scalar& InferMetaContext::AttrAt(size_t idx) const;
 template const std::vector<Scalar>& InferMetaContext::AttrAt(size_t idx) const;
 template const IntArray& InferMetaContext::AttrAt(size_t idx) const;
-template const DataType& InferMetaContext::AttrAt(size_t idx) const;
+template TEST_API const DataType& InferMetaContext::AttrAt(size_t idx) const;
 template const DataLayout& InferMetaContext::AttrAt(size_t idx) const;
 template const Place& InferMetaContext::AttrAt(size_t idx) const;
 template const TensorRef& InferMetaContext::AttrAt(size_t idx) const;

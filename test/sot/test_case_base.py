@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import contextlib
 import copy
-import inspect
-import os
 import types
 import unittest
 
@@ -38,39 +36,7 @@ def test_instruction_translator_cache_context():
     cache.clear()
 
 
-def github_action_error_msg(msg: str):
-    if 'GITHUB_ACTIONS' in os.environ:
-        frame = inspect.currentframe()
-        if frame is not None:
-            # find the first frame that is in the test folder
-            while frame.f_back is not None:
-                filename = frame.f_code.co_filename
-                if filename.startswith("./"):
-                    filename = f"tests/{filename[2:]}"
-                    lineno = frame.f_lineno
-                    output = f"\n::error file={filename},line={lineno}::{msg}"
-                    return output
-                frame = frame.f_back
-    return None
-
-
 class TestCaseBase(unittest.TestCase):
-    def assertIs(self, x, y, msg=None):
-        super().assertIs(x, y, msg=msg)
-        if msg is None:
-            msg = f"Assert Is, x is {x}, y is {y}"
-        msg = github_action_error_msg(msg)
-        if msg is not None:
-            print(msg)
-
-    def assertEqual(self, x, y, msg=None):
-        super().assertEqual(x, y, msg=msg)
-        if msg is None:
-            msg = f"Assert Equal, x is {x}, y is {y}"
-        msg = github_action_error_msg(msg)
-        if msg is not None:
-            print(msg)
-
     def assert_nest_match(self, x, y):
         cls_x = type(x)
         cls_y = type(y)

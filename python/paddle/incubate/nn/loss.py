@@ -12,13 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from paddle import _C_ops
 from paddle.base.data_feeder import check_variable_and_dtype
 from paddle.base.layer_helper import LayerHelper
-from paddle.framework import in_dynamic_mode
+from paddle.framework import in_dynamic_or_pir_mode
+
+if TYPE_CHECKING:
+    from typing import Literal, TypeAlias, Union
+
+    from paddle import Tensor
+
+    _ReduceModeStringLiteral: TypeAlias = Literal['mean', 'sum', 'none']
+    _ReduceModeNumberLiteral: TypeAlias = Literal[0, 1, 2]
+    _ReduceMode: TypeAlias = Union[
+        _ReduceModeStringLiteral, _ReduceModeNumberLiteral
+    ]
 
 
-def identity_loss(x, reduction="none"):
+def identity_loss(x: Tensor, reduction: _ReduceMode = "none") -> Tensor:
     r"""Marks a tensor as being part of the loss calculation for IPU.
 
     This operator is used to handle on the (final) loss of a model so that
@@ -59,7 +74,7 @@ def identity_loss(x, reduction="none"):
         if reduction is None:
             raise Exception("Unsupported reduction type.")
 
-    if in_dynamic_mode():
+    if in_dynamic_or_pir_mode():
         return _C_ops.identity_loss(x, reduction)
 
     check_variable_and_dtype(x, 'x', ['float32', 'float64'], "identity_loss")

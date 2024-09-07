@@ -75,7 +75,7 @@ void MaskedSelectKernel(const Context& dev_ctx,
   auto mask_dim = mask_expand.dims();
   PADDLE_ENFORCE_EQ(input_dim,
                     mask_dim,
-                    phi::errors::InvalidArgument(
+                    common::errors::InvalidArgument(
                         "The dim size of input and mask in OP(masked_selected) "
                         "must be equal, but got input dim:(%ld), mask dim: "
                         "(%ld). Please check input "
@@ -94,11 +94,17 @@ PD_REGISTER_KERNEL(masked_select,
                    GPU,
                    ALL_LAYOUT,
                    phi::MaskedSelectKernel,
+                   bool,
                    float,
                    double,
                    int,
+                   int8_t,
                    int64_t,
+                   int16_t,
+                   uint8_t,
                    phi::dtype::float16,
-                   phi::dtype::bfloat16) {
+                   phi::dtype::bfloat16,
+                   phi::dtype::complex<float>,
+                   phi::dtype::complex<double>) {
   kernel->InputAt(1).SetDataType(phi::DataType::BOOL);
 }

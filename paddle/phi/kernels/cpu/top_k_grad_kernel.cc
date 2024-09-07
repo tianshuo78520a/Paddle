@@ -124,7 +124,7 @@ void TopkGradKernel(const Context& dev_ctx,
         common::slice_ddim(trans_in_dims, 0, trans_in_dims.size() - 1));
     const int64_t input_width = trans_in_dims[trans_in_dims.size() - 1];
 
-    // Assign the out_grad to tranpose input_grad
+    // Assign the out_grad to transpose input_grad
     DenseTensor tmp_out;
     tmp_out.Resize(trans_in_dims);
     T* t_out = dev_ctx.template Alloc<T>(&tmp_out);
@@ -144,12 +144,31 @@ void TopkGradKernel(const Context& dev_ctx,
   }
 }
 
+template <typename T, typename Context>
+void TopkV1GradKernel(const Context& dev_ctx,
+                      const DenseTensor& x,
+                      const DenseTensor& indices,
+                      const DenseTensor& out_grad,
+                      const Scalar& k_scalar,
+                      DenseTensor* x_grad) {
+  TopkGradKernel<T, Context>(
+      dev_ctx, x, indices, out_grad, k_scalar, -1, true, true, x_grad);
+}
 }  // namespace phi
 
 PD_REGISTER_KERNEL(topk_grad,
                    CPU,
                    ALL_LAYOUT,
                    phi::TopkGradKernel,
+                   float,
+                   double,
+                   int32_t,
+                   int64_t) {}
+
+PD_REGISTER_KERNEL(topk_v1_grad,
+                   CPU,
+                   ALL_LAYOUT,
+                   phi::TopkV1GradKernel,
                    float,
                    double,
                    int32_t,

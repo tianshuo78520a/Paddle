@@ -12,12 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import copy
 import os
 from dataclasses import dataclass
-from typing import Tuple
+from typing import TYPE_CHECKING
 
 import paddle
+from paddle.base.framework import (
+    _current_expected_place,
+)
 from paddle.distributed.communication.group import is_initialized
 from paddle.distributed.fleet.utils.log_util import logger
 
@@ -27,17 +32,28 @@ from .utils import (
     flatten_state_dict,
 )
 
+if TYPE_CHECKING:
+    from paddle import Tensor
+    from paddle.distributed.collective import Group
+
 
 @dataclass(frozen=True)
 class ReadItem:
     local_tensor_index: LocalTensorIndex
     rank: int
-    cur_offset: Tuple[int]
-    storage_offset: Tuple[int]
-    lengths: Tuple[int]
+    dtype: str
+    cur_offset: tuple[int]
+    storage_offset: tuple[int]
+    lengths: tuple[int]
 
 
-def get_rank_to_files(path, state_dict, process_group, use_dist):
+PATH_TO_CHECKPOINT_FILES: dict[str, tuple[list, list]] = {}
+
+
+def get_checkpoint_files(path, use_cache=True):
+    global PATH_TO_CHECKPOINT_FILES
+    if use_cache and path in PATH_TO_CHECKPOINT_FILES:
+        return PATH_TO_CHECKPOINT_FILES[path]
     accessible_files = os.listdir(path)
     metadata_files = [
         file for file in accessible_files if file.endswith(".metadata")
@@ -45,29 +61,58 @@ def get_rank_to_files(path, state_dict, process_group, use_dist):
     assert (
         len(metadata_files) > 0
     ), f"No metadata file found in the checkpoint directory:{path}."
-    # The neccesary files to be read
-    tensor_key_list = []
-    necessary_files = []
-    for metadata_file in metadata_files:
-        metadata = paddle.load(os.path.join(path, metadata_file))
-        for local_tensor_index, file_name in metadata.storage_metadata.items():
-            assert (
-                local_tensor_index not in tensor_key_list
-            ), f"Duplicate tensor_key:{local_tensor_index} found. Check whether the metadata_file:{metadata_file} contains the same tensor metadata."
-            tensor_key_list.append(local_tensor_index.tensor_key)
-            if local_tensor_index.tensor_key in state_dict:
-                necessary_files.append(file_name)
-    necessary_data_files_set = set(necessary_files)
-    if len(necessary_data_files_set) <= 0:
-        logger.warning(
-            f"No necessary data files found in the checkpoint directory:{path}. Please check the metadata_files:{metadata_files}"
-        )
-        return {}
-
-    # allgather all accessible files
     local_data_files = [
         file for file in accessible_files if file.endswith(".distcp")
     ]
+    assert (
+        len(local_data_files) > 0
+    ), f"No data file found in the checkpoint directory:{path}."
+    if use_cache:
+        PATH_TO_CHECKPOINT_FILES[path] = (metadata_files, local_data_files)
+    return (metadata_files, local_data_files)
+
+
+def get_rank_to_files(
+    metadata_list, local_data_files, state_dict, process_group, use_dist
+):
+    """
+    Get the mapping of rank to its accessible files.
+    """
+
+    # The necessary files to be read
+    tensor_key_list = []
+    necessary_files = []
+
+    for metadata in metadata_list:
+        for local_tensor_index, file_name in metadata.storage_metadata.items():
+            assert (
+                local_tensor_index not in tensor_key_list
+            ), f"Duplicate tensor_key:{local_tensor_index} found. Check whether the metadata."
+            tensor_key_list.append(local_tensor_index.tensor_key)
+            if local_tensor_index.tensor_key in state_dict:
+                necessary_files.append(file_name)
+
+    all_necessary_files = []
+    if use_dist:
+        paddle.distributed.all_gather_object(
+            all_necessary_files, necessary_files, process_group
+        )
+    else:
+        all_necessary_files.append(necessary_files)
+
+    global_necessary_files = [
+        file for files in all_necessary_files for file in files
+    ]
+
+    global_necessary_files_set = set(global_necessary_files)
+    if len(global_necessary_files_set) <= 0:
+        logger.warning(
+            "No necessary data files found in the checkpoint directory. Please check the metadata."
+        )
+        missing_keys = set(state_dict.keys())
+        return {}, missing_keys
+
+    # allgather all accessible files
     global_data_files = []
     if use_dist:
         paddle.distributed.all_gather_object(
@@ -80,13 +125,13 @@ def get_rank_to_files(path, state_dict, process_group, use_dist):
         tmp += files
     global_data_files_set = set(tmp)
     logger.debug(
-        f"necessary_data_files_set:{necessary_data_files_set}, global_data_files_set:{global_data_files_set}"
+        f"necessary_data_files_set:{global_necessary_files_set}, global_data_files_set:{global_data_files_set}"
     )
-    # check neccesary files in global_data_files
+    # check necessary files in global_data_files
     assert (
-        global_data_files_set & necessary_data_files_set
-        == necessary_data_files_set
-    ), f"The checkpoint files are not complete. Please check the checkpoint directory:{path}.global_data_files_set:{global_data_files_set}, necessary_data_files_set:{necessary_data_files_set}"
+        global_data_files_set & global_necessary_files_set
+        == global_necessary_files_set
+    ), f"The checkpoint files are not complete. Please check the checkpoint directory. global_data_files_set:{global_data_files_set}, necessary_data_files_set:{global_necessary_files_set}"
     missing_keys = set(state_dict.keys()) - set(tensor_key_list)
     if len(missing_keys) > 0:
         logger.warning(
@@ -94,19 +139,85 @@ def get_rank_to_files(path, state_dict, process_group, use_dist):
         )
 
     rank_to_files = {}
-    for rank, local_files in enumerate(global_data_files):
-        if len(local_files) > 0:
-            local_files = [
-                f for f in local_files if f in necessary_data_files_set
-            ]
-            rank_to_files[rank] = local_files
+    for rank, need_files in enumerate(all_necessary_files):
+        seen = set()
+        unique_need_files = [
+            f for f in need_files if not (f in seen or seen.add(f))
+        ]
+        rank_to_files[rank] = unique_need_files
     logger.debug(f"mapping rank_to_files:{rank_to_files}")
-    return rank_to_files
+    return rank_to_files, missing_keys
 
 
-def get_local_load_files(rank_to_files):
+def get_rank_to_read_files(rank_to_files, rank_to_local_data_files):
+    cross_node_file_names = []
+    rank_to_need_files = copy.deepcopy(rank_to_files)
+    for rank, need_files in rank_to_need_files.items():
+        local_data_files = rank_to_local_data_files[rank]
+        file_need_to_remove = []
+        for file in need_files:
+            if file not in local_data_files:
+                file_need_to_remove.append(file)
+        for file in file_need_to_remove:
+            need_files.remove(file)
+        cross_node_file_names += file_need_to_remove
+
+    not_read_file_ranks = []
+    for rank, files in rank_to_need_files.items():
+        if len(files) == 0:
+            not_read_file_ranks.append(rank)
+    for rank in not_read_file_ranks:
+        rank_to_need_files.pop(rank)
+
+    rank_load_files = _get_rank_to_read_files(rank_to_need_files)
+
+    for rank in not_read_file_ranks:
+        rank_load_files[rank] = []
+
+    cur_load_files = []
+    for rank, load_file in rank_load_files.items():
+        cur_load_files += load_file
+
+    unload_files = []
+    for file in cross_node_file_names:
+        if file not in cur_load_files:
+            unload_files.append(file)
+
+    file_to_ranks = {}
+    for rank, files in rank_to_local_data_files.items():
+        for file in files:
+            if file not in file_to_ranks:
+                file_to_ranks[file] = [rank]
+            else:
+                file_to_ranks[file].append(rank)
+
+    seen = set()
+    unload_files = [x for x in unload_files if not (x in seen or seen.add(x))]
+    for file in unload_files:
+        sub_rank_load_files = {}
+        for rank in file_to_ranks[file]:
+            sub_rank_load_files[rank] = rank_load_files[rank]
+        min_rank = min(
+            sub_rank_load_files,
+            key=lambda rank: (len(sub_rank_load_files[rank]), rank),
+        )
+        rank_load_files[min_rank].append(file)
+
+    cur_rank = paddle.distributed.get_rank()
+    if cur_rank in rank_load_files:
+        return rank_load_files[cur_rank]
+    else:
+        logger.warning(f"rank:{cur_rank} does not need to load checkpoint")
+        return []
+
+
+def _get_rank_to_read_files(rank_to_files):
     """
     Load files in a load-balanced manner.
+
+    Args:
+        rank_to_files (dict): mapping from rank to files.
+
     Example:
         Case1: all ranks access the same data files
             rank_to_files = {rank0:[0_0.distcp, 1_0.distcp, 2_0.distcp, 3_0.distcp], rank1:[0_0.distcp, 1_0.distcp, 2_0.distcp, 3_0.distcp]}
@@ -124,7 +235,7 @@ def get_local_load_files(rank_to_files):
             if file not in file_to_ranks:
                 file_to_ranks[file] = []
             file_to_ranks[file].append(rank)
-    rank_to_not_read_files = copy.copy(rank_to_files)
+    rank_to_not_read_files = copy.deepcopy(rank_to_files)
     rank_to_read_files = {rank: [] for rank in rank_to_not_read_files.keys()}
     for file, ranks in file_to_ranks.items():
         if len(ranks) == 1:
@@ -154,6 +265,13 @@ def get_local_load_files(rank_to_files):
             for rank, files in rank_to_not_read_files.items()
             if rank in ranks
         ]
+        # 'ranks' refer to the ranks that have read the fewest number of files so far. However, the files containing the weights required
+        # . by these ranks may have already been completely read. In this case, they will not read any more files.
+        if len(nums) == 0:
+            nums = [
+                (rank, len(files))
+                for rank, files in rank_to_not_read_files.items()
+            ]
         nums = sorted(nums, key=lambda x: x[1])
         rank = nums[0][0]
         return (rank, rank_to_not_read_files[rank][0])
@@ -186,31 +304,19 @@ def get_local_load_files(rank_to_files):
         logger.debug(
             f"update rank_to_read_files:{rank_to_read_files}, rank_to_not_read_files:{rank_to_not_read_files}, ranks:{ranks}, rank_file:{rank_file}"
         )
-    cur_rank = paddle.distributed.get_rank()
-    if cur_rank in rank_to_read_files:
-        return rank_to_read_files[cur_rank]
-    else:
-        logger.warning(f"rank:{cur_rank} does not need to load checkpoint")
-        return []
+    return rank_to_read_files
 
 
-def get_load_infos(path, local_load_files, process_group, use_dist):
+def get_load_infos(metadata_list, local_load_files, process_group, use_dist):
     load_info = {}
-    accessible_files = os.listdir(path)
-    metadata_files = [
-        file for file in accessible_files if file.endswith(".metadata")
-    ]
-    assert (
-        len(metadata_files) > 0
-    ), "No metadata file found in the checkpoint directory:{path}."
-    for metadata_file in metadata_files:
-        metadata = paddle.load(os.path.join(path, metadata_file))
+    for metadata in metadata_list:
         for local_tensor_index, file_name in metadata.storage_metadata.items():
             if file_name in local_load_files:
                 load_info[local_tensor_index] = (
                     paddle.distributed.get_rank(),
                     file_name,
                 )
+
     load_info_list = []
     if use_dist:
         paddle.distributed.all_gather_object(
@@ -233,14 +339,14 @@ def compute_overlap(
     cur_offsets = []
     storage_offsets = []
     lengths = []
-    for cur_len, cur_offset, strorage_len, storage_offset in zip(
+    for cur_len, cur_offset, storage_len, storage_offset in zip(
         cur_chunk_metadata.local_shape,
         cur_chunk_metadata.global_offset,
         storage_local_tensor_metadata.local_shape,
         storage_local_tensor_metadata.global_offset,
     ):
         begin_offset = max(cur_offset, storage_offset)
-        end_offset = min(cur_offset + cur_len, storage_offset + strorage_len)
+        end_offset = min(cur_offset + cur_len, storage_offset + storage_len)
         if begin_offset == cur_offset:
             cur_offsets.append(0)
             storage_offsets.append(begin_offset - storage_offset)
@@ -262,31 +368,23 @@ def not_overlap(
     cur_chunk_metadata: LocalTensorMetadata,
     storage_local_tensor_metadata: LocalTensorMetadata,
 ):
-    for cur_len, cur_offset, strorage_len, storage_offset in zip(
+    for cur_len, cur_offset, storage_len, storage_offset in zip(
         cur_chunk_metadata.local_shape,
         cur_chunk_metadata.global_offset,
         storage_local_tensor_metadata.local_shape,
         storage_local_tensor_metadata.global_offset,
     ):
         if (
-            cur_offset >= (storage_offset + strorage_len)
+            cur_offset >= (storage_offset + storage_len)
             or (cur_offset + cur_len) <= storage_offset
         ):
             return True
     return False
 
 
-def get_read_items(path, state_dict, process_group, use_dist):
-    accessible_files = os.listdir(path)
-    metadata_files = [
-        file for file in accessible_files if file.endswith(".metadata")
-    ]
-    assert (
-        len(metadata_files) > 0
-    ), "No metadata file found in the checkpoint directory:{path}."
+def get_read_items(metadata_list, state_dict, process_group, use_dist):
     storage_state_dict_metadata = {}
-    for metadata_file in metadata_files:
-        metadata = paddle.load(os.path.join(path, metadata_file))
+    for metadata in metadata_list:
         for (
             tensor_key,
             local_tensor_metadata,
@@ -294,6 +392,7 @@ def get_read_items(path, state_dict, process_group, use_dist):
             if tensor_key not in storage_state_dict_metadata:
                 storage_state_dict_metadata[tensor_key] = []
             storage_state_dict_metadata[tensor_key] += local_tensor_metadata
+
     read_items = []
     logger.debug(f"storage_state_dict_metadata:{storage_state_dict_metadata}")
     for tensor_key, val in state_dict.items():
@@ -319,7 +418,9 @@ def get_read_items(path, state_dict, process_group, use_dist):
                 global_offset = (
                     tuple([0] * len(val.shape)) if len(val.shape) > 0 else ()
                 )
-            cur_chunk_metadata = LocalTensorMetadata(global_offset, local_shape)
+            cur_chunk_metadata = LocalTensorMetadata(
+                global_offset, local_shape, str(val.dtype).split(".")[1]
+            )
             assert (
                 tensor_key in storage_state_dict_metadata
             ), f"tensor_key:{tensor_key} not found in storage_state_dict_metadata:{storage_state_dict_metadata}."
@@ -341,6 +442,7 @@ def get_read_items(path, state_dict, process_group, use_dist):
                     ReadItem(
                         storage_local_tensor_index,
                         paddle.distributed.get_rank(),
+                        storage_local_tensor_metadata.dtype,
                         tuple(cur_offsets),
                         tuple(storage_offsets),
                         tuple(lengths),
@@ -363,10 +465,11 @@ def get_read_items(path, state_dict, process_group, use_dist):
 
 
 def load_state_dict(
-    state_dict,
-    path,
-    process_group=None,
-    coordinator_rank=0,
+    state_dict: dict[str, Tensor],
+    path: str,
+    process_group: Group | None = None,
+    coordinator_rank: int = 0,
+    offload=False,
 ) -> None:
     """
     Load the state_dict inplace from a checkpoint path.
@@ -376,7 +479,7 @@ def load_state_dict(
         path(str): The directory to load checkpoint files.
         process_group(paddle.distributed.collective.Group): ProcessGroup to be used for cross-rank synchronization. Use the default process group which contains all cards.
         coordinator_rank(int): The rank used to coordinate the checkpoint. Rank0 is used by default.
-
+        offload(bool): Whether to offload the checkpoint data from GPU to CPU.
     Example:
         .. code-block:: python
 
@@ -405,12 +508,12 @@ def load_state_dict(
         assert isinstance(
             state_dict, dict
         ), "The state_dict should be a dictionary."
-        state_dict = flatten_state_dict(state_dict)
-        if len(state_dict) > 0:
-            for val in state_dict.values():
+        flat_state_dict, mapping = flatten_state_dict(state_dict)
+        if len(flat_state_dict) > 0:
+            for val in flat_state_dict.values():
                 assert isinstance(
                     val, paddle.Tensor
-                ), f"Only support dygraph Tensor now, but is {val}"
+                ), f"The value of state_dict should be a paddle.Tensor, but got: {val}."
 
         use_dist = True if paddle.distributed.get_world_size() > 1 else False
 
@@ -422,47 +525,120 @@ def load_state_dict(
             # sync to avoid some ranks not write path yet
             paddle.distributed.barrier(process_group)
 
-        rank_to_files = get_rank_to_files(
-            path, state_dict, process_group, use_dist
+        metadata_files, local_data_files = get_checkpoint_files(path)
+
+        metadata_list = []
+        for file in metadata_files:
+            metadata_list.append(paddle.load(os.path.join(path, file)))
+
+        rank_to_files, missing_keys = get_rank_to_files(
+            metadata_list,
+            local_data_files,
+            flat_state_dict,
+            process_group,
+            use_dist,
         )
+
+        if len(missing_keys) > 0:
+            logger.warning(
+                f"The following keys:{missing_keys} are not found in checkpoint path: {path}."
+            )
         if len(rank_to_files) <= 0:
             return
-        local_load_files = get_local_load_files(rank_to_files)
+
+        cur_rank = paddle.distributed.get_rank()
+        global_local_data_files = []
+        if use_dist:
+            paddle.distributed.all_gather_object(
+                global_local_data_files,
+                {cur_rank: local_data_files},
+                process_group,
+            )
+        else:
+            global_local_data_files = [{cur_rank: local_data_files}]
+
+        rank_to_local_data_files = {}
+        for d in global_local_data_files:
+            rank_to_local_data_files.update(d)
+
+        local_load_files = get_rank_to_read_files(
+            rank_to_files, rank_to_local_data_files
+        )
+
+        source_state_dict = {}
+        for file in local_load_files:
+            if offload:
+                state_dict_numpy = paddle.load(
+                    os.path.join(path, file), return_numpy=True
+                )
+                source_state_dict[file] = {
+                    key: paddle.to_tensor(value, place=paddle.CPUPlace())
+                    for key, value in state_dict_numpy.items()
+                }
+            else:
+                source_state_dict[file] = paddle.load(os.path.join(path, file))
+
+        _load_state_dict(
+            flat_state_dict,
+            source_state_dict,
+            metadata_list,
+            process_group,
+            coordinator_rank,
+            offload,
+        )
+
+
+def _load_state_dict(
+    target_state_dict,
+    source_state_dict,
+    metadata_list,
+    process_group=None,
+    coordinator_rank=0,
+    offload=False,
+) -> None:
+    with paddle.base.dygraph.guard():
+
+        state_dict_in_cpu = {}
+        for k, v in target_state_dict.items():
+            if v.place.is_cpu_place():
+                state_dict_in_cpu[k] = v
+                target_state_dict[k] = v.cuda()
+
+        use_dist = True if paddle.distributed.get_world_size() > 1 else False
+
+        local_load_files = list(source_state_dict.keys())
         # load_infos: {LocalTensorIndex: (rank, file_name)}, which local tensor located in which file, and the file is load in which rank.
         load_infos = get_load_infos(
-            path, local_load_files, process_group, use_dist
+            metadata_list, local_load_files, process_group, use_dist
         )
         # read_items: [ReadItem(local_tensor_index, rank, cur_offsets, storage_offsets, lengths)],
         # slice the storage local tensor in (storage_offsets, lengths) to assign the current tensor in (cur_offsets, lengths) in rank.
-        read_items = get_read_items(path, state_dict, process_group, use_dist)
-        storage_file_to_state_dict = {}
-        logger.debug(
-            f"before load, state_dict:{state_dict},\n load_infos:{load_infos},\n read_items:{read_items}"
+        read_items = get_read_items(
+            metadata_list, target_state_dict, process_group, use_dist
         )
-        state_dict_in_cpu = []
-        for k, v in state_dict.items():
-            if v.place.is_cpu_place():
-                state_dict_in_cpu.append(k)
-                state_dict[k] = v.cuda()
         for item in read_items:
             assert (
                 item.local_tensor_index in load_infos
-            ), f"item:{item}, load_infos:{load_infos}"
+            ), f"read item:{item}, load_infos:{load_infos}"
+
+            logger.debug(f"read item: {item}")
             src_rank, file_name = load_infos[item.local_tensor_index]
             storage_chunk_tensor = None
             cur_chunk_tensor = None
             # The src rank need to load the state_dict.
             if src_rank == paddle.distributed.get_rank():
-                if file_name not in storage_file_to_state_dict:
-                    # The value in state_dict is not distributed tensor but a normal tensor.
-                    storage_file_to_state_dict[file_name] = paddle.load(
-                        os.path.join(path, file_name)
-                    )
-                storage_state_dict = storage_file_to_state_dict[file_name]
+                assert file_name in source_state_dict
+                storage_state_dict = source_state_dict[file_name]
                 assert item.local_tensor_index.tensor_key in storage_state_dict
                 storage_local_tensor = storage_state_dict[
                     item.local_tensor_index.tensor_key
                 ]
+
+                if offload:
+                    storage_local_tensor = paddle.to_tensor(
+                        storage_local_tensor, place=_current_expected_place()
+                    )
+
                 storage_offsets = item.storage_offset
                 storage_lengths = item.lengths
                 storage_ends = [
@@ -484,16 +660,20 @@ def load_state_dict(
             # The read item rank need to be assigned
             if item.rank == paddle.distributed.get_rank():
                 assert (
-                    item.local_tensor_index.tensor_key in state_dict
-                ), f"item:{item}, state_dict:{state_dict}"
+                    item.local_tensor_index.tensor_key in target_state_dict
+                ), f"item:{item}, state_dict:{target_state_dict}"
+
                 cur_local_tensor = (
-                    state_dict[
+                    target_state_dict[
                         item.local_tensor_index.tensor_key
                     ]._local_value()
                     if use_dist
-                    and state_dict[item.local_tensor_index.tensor_key].is_dist()
-                    else state_dict[item.local_tensor_index.tensor_key]
+                    and target_state_dict[
+                        item.local_tensor_index.tensor_key
+                    ].is_dist()
+                    else target_state_dict[item.local_tensor_index.tensor_key]
                 )
+
                 cur_offsets = item.cur_offset
                 cur_lengths = item.lengths
                 cur_ends = [
@@ -511,25 +691,36 @@ def load_state_dict(
                 else:
                     cur_chunk_tensor = cur_local_tensor
             else:
+                # Why we use item.dtype: In static mode, the state_dict maybe incomplete in pp, the dtype is stored in advance.
                 cur_chunk_tensor = paddle.zeros(
                     item.lengths,
-                    dtype=state_dict[item.local_tensor_index.tensor_key].dtype,
+                    item.dtype,
                 )
 
+            # Src_rank represents the rank of data read from ckpt, item_rank is the rank of the parameter of the data to be loaded.
             if src_rank == item.rank:
-                # assign value locally
-                paddle.assign(storage_chunk_tensor, cur_chunk_tensor)
-            else:
-                # assign value remotely
                 if src_rank == paddle.distributed.get_rank():
+                    # Assign value locally: in the case of src_rank is cur_rank, it means that the ckpt and the parameters to be loaded are both in the current node.
+                    paddle.assign(storage_chunk_tensor, cur_chunk_tensor)
+            else:
+                # Assign value remotely: src_rank broadcasts the ckpt, and the parameters to be loaded receive the data broadcast by src_rank.
+                if src_rank == paddle.distributed.get_rank():
+                    storage_chunk_tensor = storage_chunk_tensor.contiguous()
                     paddle.distributed.broadcast(
                         storage_chunk_tensor, src=src_rank, group=process_group
                     )
                 else:
+                    # The memory hold by cur_chunk_tensor may be non-contiguous, and the broadcast API does not support this type of tensor.
+                    tmp_tensor = paddle.assign(cur_chunk_tensor)
                     paddle.distributed.broadcast(
-                        cur_chunk_tensor, src=src_rank, group=process_group
+                        tmp_tensor, src=src_rank, group=process_group
                     )
+                    paddle.assign(tmp_tensor, cur_chunk_tensor)
 
-        for k, v in state_dict.items():
+        for k, v in target_state_dict.items():
             if k in state_dict_in_cpu:
-                state_dict[k] = v.cpu()
+                value = state_dict_in_cpu[k]
+                paddle.assign(v.cpu(), value)
+
+        if use_dist:
+            paddle.distributed.barrier(process_group)

@@ -11,9 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from __future__ import annotations
 
+import multiprocessing
 import os
-from typing import List
+import time
+from typing import TYPE_CHECKING
 
 import paddle
 from paddle.distributed.communication.group import is_initialized
@@ -25,15 +28,52 @@ from .utils import (
     flatten_state_dict,
 )
 
+if TYPE_CHECKING:
+    from paddle import Tensor
+    from paddle.distributed.collective import Group
 
-def check_state_dict(state_dict, process_group):
-    local_keys = list(state_dict.keys())
-    gloabl_keys = []
-    paddle.distributed.all_gather_object(gloabl_keys, local_keys, process_group)
-    for keys in gloabl_keys[1:]:
-        assert (
-            keys == gloabl_keys[0]
-        ), f"keys:{keys} != first_keys: {gloabl_keys[0]}"
+async_save_queue = []
+
+
+def check_exitcode(task):
+    exitcode = task.exitcode
+    if exitcode != 0:
+        logger.error(
+            f"Error: save ckpt process failed with exitcode {exitcode}!!!"
+        )
+
+
+def clear_async_save_task_queue():
+    """
+    wait until all async save task to be done.
+    """
+    while len(async_save_queue) > 0:
+        task = async_save_queue.pop()
+        if task and task.is_alive():
+            task.join(timeout=60)
+            if task.is_alive():
+                logger.error("Error: save ckpt process timeout!!!")
+                async_save_queue.append(task)
+            else:
+                check_exitcode(task)
+        else:
+            check_exitcode(task)
+
+
+def copy_dict_to_cpu(nested_dict):
+    """
+    Copy the paddle.Tensor objects in the nested dictionary to the CPU and return a new dict.
+    """
+    new_dict = {}
+    for key, value in nested_dict.items():
+        if isinstance(value, paddle.Tensor):
+            new_dict[key] = value.cpu()
+            paddle.device.synchronize()
+        elif isinstance(value, dict):
+            new_dict[key] = copy_dict_to_cpu(value)
+        else:
+            new_dict[key] = value
+    return new_dict
 
 
 def check_file_name(file_name, process_group):
@@ -50,7 +90,7 @@ def check_file_name(file_name, process_group):
 
 def merge_state_dict_metadata(global_state_dict_metadata):
     assert isinstance(
-        global_state_dict_metadata, List
+        global_state_dict_metadata, list
     ), "The global_state_dict should be a list."
     out = {}
     for state_dict in global_state_dict_metadata:
@@ -64,7 +104,7 @@ def merge_state_dict_metadata(global_state_dict_metadata):
     return out
 
 
-def dedup_storage_metadata(global_storage_metadata):
+def dedup_key_in_dict(global_storage_metadata):
     out = {}
     for storage_metadata in global_storage_metadata:
         for key, val in storage_metadata.items():
@@ -74,11 +114,40 @@ def dedup_storage_metadata(global_storage_metadata):
     return out
 
 
+def dedup_tensor(
+    local_state_dict, local_storage_metadata, global_storage_metadata
+):
+    """
+    Dedup the replicated tensor in local state_dict.
+
+    Args:
+        local_state_dict(Dict[str, paddle.Tensor]): The state_dict of current rank.
+        local_storage_metadata(Dict[LocalTensorIndex, str]): The storage metadata of current rank.
+        global_storage_metadata(Dict[LocalTensorIndex, str]): The final storage metadata of all ranks.
+
+    Examples:
+        In rank0, local_state_dict:{"w1": t1_0, "w2": t2}, local_storage_metadata:{LocalTensorIndex("w1", (0,0)): "0_0.distcp", LocalTensorIndex("w2", (0,0)): "0_0.distcp"},
+        in rank1, local_state_dict:{"w1": t1_1, "w2": t2}, local_storage_metadata:{LocalTensorIndex("w1", (1,0)): "1_0.distcp", LocalTensorIndex("w2", (0,0)): "1_0.distcp"},
+        global_storage_metadata:{LocalTensorIndex("w1", (0,0)): "0_0.distcp", LocalTensorIndex("w1", (1,0)): "1_0.distcp", LocalTensorIndex("w2", (0, 0)): "0_0.distcp"}.
+        w2 is replicated in rank0 and rank1. We save it in rank0 as default thus need to remove it in other ranks.
+        Finally, the local_state_dict:{"w1": t1_1, "w2": t2} in rank1 update to {"w1": t1_1}.
+    """
+
+    for tensor_index, file_name in global_storage_metadata.items():
+        rank = int(file_name.split(".")[0].split("_")[0])
+        if (
+            tensor_index in local_storage_metadata
+            and rank != paddle.distributed.get_rank()
+        ):
+            local_state_dict.pop(tensor_index.tensor_key)
+
+
 def save_state_dict(
-    state_dict,
-    path,
-    process_group=None,
-    coordinator_rank=0,
+    state_dict: dict[str, Tensor],
+    path: str,
+    process_group: Group | None = None,
+    coordinator_rank: int = 0,
+    async_save: bool = False,
 ) -> None:
     """
     Save the state_dict of model to path.
@@ -88,6 +157,7 @@ def save_state_dict(
         path(str): The directory to save state_dict.
         process_group(paddle.distributed.collective.Group): ProcessGroup to be used for cross-rank synchronization. Use the default process group which contains all cards.
         coordinator_rank(int): The rank used to save non distributed values. Rank0 is used by default.
+        async_save(bool): Async save the state_dict, default is False.
 
     Examples:
         .. code-block:: python
@@ -107,12 +177,12 @@ def save_state_dict(
         assert isinstance(
             state_dict, dict
         ), "The state_dict should be a dictionary."
-        state_dict = flatten_state_dict(state_dict)
-        if len(state_dict) > 0:
-            for val in state_dict.values():
+        flat_state_dict, mapping = flatten_state_dict(state_dict)
+        if len(flat_state_dict) > 0:
+            for val in flat_state_dict.values():
                 assert isinstance(
                     val, paddle.Tensor
-                ), "Only support dygraph Tensor now, support static DistributedTensor later"
+                ), f"The value of state_dict should be a paddle.Tensor, but got: {val}."
 
         if not os.path.exists(path):
             os.makedirs(path, exist_ok=True)
@@ -133,18 +203,19 @@ def save_state_dict(
         logger.debug(f"file_name:{file_name}")
         if use_dist:
             check_file_name(file_name, process_group)
-            # the parameter_name and order in state_dict should be the same
-            check_state_dict(state_dict, process_group)
         metadata = Metadata()
         local_state_dict = {}
         local_state_dict_metadata = {}
         local_storage_metadata = {}
-        for key, val in state_dict.items():
+        for key, val in flat_state_dict.items():
             if isinstance(val, paddle.Tensor):
                 # Case1: not initialized means this tensor is placed in another mesh which do not contain this rank
                 if not val._is_initialized():
                     continue
                 if val.is_dist():
+                    local_tensor = val._local_value()
+                    # Note: The local_tensor must keep the same name with the original tensor. Otherwise, the StructuredToParameterName@@ mapping will be wrong.
+                    local_tensor.name = val.name
                     # when val is scalar, the shape is []
                     (
                         local_shape,
@@ -160,7 +231,6 @@ def save_state_dict(
                     )
                     if local_shape is None or global_offset is None:
                         continue
-                    local_tensor = val._local_value()
                 else:
                     local_shape = tuple(val.shape)
                     global_offset = (
@@ -170,14 +240,17 @@ def save_state_dict(
                     )
                     local_tensor = val
                 local_state_dict[key] = local_tensor
+                local_tenosr_dtype = str(local_tensor.dtype).split('.')[1]
                 local_state_dict_metadata[key] = LocalTensorMetadata(
-                    global_offset, local_shape
+                    global_offset, local_shape, local_tenosr_dtype
                 )
                 local_storage_metadata[
                     LocalTensorIndex(key, tuple(global_offset))
                 ] = file_name
+
         global_state_dict_metadata = []
         global_storage_metadata = []
+        global_flatten_mapping = []
         if use_dist:
             paddle.distributed.all_gather_object(
                 global_state_dict_metadata,
@@ -187,19 +260,52 @@ def save_state_dict(
             paddle.distributed.all_gather_object(
                 global_storage_metadata, local_storage_metadata, process_group
             )
+            paddle.distributed.all_gather_object(
+                global_flatten_mapping, mapping, process_group
+            )
         else:
             global_state_dict_metadata.append(local_state_dict_metadata)
             global_storage_metadata.append(local_storage_metadata)
+            global_flatten_mapping.append(mapping)
 
         metadata.state_dict_metadata = merge_state_dict_metadata(
             global_state_dict_metadata
         )
-        metadata.storage_metadata = dedup_storage_metadata(
-            global_storage_metadata
-        )
+        metadata.storage_metadata = dedup_key_in_dict(global_storage_metadata)
+        metadata.flat_mapping = dedup_key_in_dict(global_flatten_mapping)
         if coordinator_rank == paddle.distributed.get_rank():
             logger.debug(f"metadata:{metadata}")
             paddle.save(metadata, os.path.join(path, f"{unique_id}.metadata"))
         logger.debug(f"local_state_dict:{local_state_dict}")
-        # TODO(pangengzheng): del the replicated tensor in local_state_dict, now different might save the replicated tensor
-        paddle.save(local_state_dict, os.path.join(path, file_name))
+        dedup_tensor(
+            local_state_dict, local_storage_metadata, metadata.storage_metadata
+        )
+
+        if async_save:
+            cpu_state_dict = copy_dict_to_cpu(local_state_dict)
+            clear_async_save_task_queue()
+
+            attempt = 0
+            ctx = multiprocessing.get_context("spawn")
+
+            def start_process():
+                nonlocal attempt
+                try:
+                    p = ctx.Process(
+                        target=paddle.save,
+                        args=(cpu_state_dict, os.path.join(path, file_name)),
+                    )
+                    p.start()
+                    return p
+                except Exception as e:
+                    logger.error(
+                        f"Attempt {attempt + 1} failed with error: {e}"
+                    )
+                    attempt += 1
+                    time.sleep(1)
+                    return start_process()
+
+            p = start_process()
+            async_save_queue.append(p)
+        else:
+            paddle.save(local_state_dict, os.path.join(path, file_name))

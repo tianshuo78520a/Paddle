@@ -21,6 +21,7 @@ limitations under the License. */
 #include "paddle/fluid/framework/op_desc.h"
 #include "paddle/fluid/framework/program_desc.h"
 #include "paddle/fluid/framework/var_desc.h"
+#include "paddle/phi/core/distributed/auto_parallel/proto_helper.h"
 
 namespace paddle {
 namespace distributed {
@@ -406,14 +407,17 @@ OperatorDistAttrProto OperatorDistAttr::to_proto() const {
   for (const auto& item : input_dist_attrs_) {
     auto proto_item = proto.mutable_input_dist_attrs()->Add();
     proto_item->set_name(item.first);
-    proto_item->mutable_tensor_dist_attr()->CopyFrom(item.second.to_proto());
+    proto_item->mutable_tensor_dist_attr()->CopyFrom(
+        phi::distributed::to_proto(item.second));
   }
   for (const auto& item : output_dist_attrs_) {
     auto proto_item = proto.mutable_output_dist_attrs()->Add();
     proto_item->set_name(item.first);
-    proto_item->mutable_tensor_dist_attr()->CopyFrom(item.second.to_proto());
+    proto_item->mutable_tensor_dist_attr()->CopyFrom(
+        phi::distributed::to_proto(item.second));
   }
-  proto.mutable_process_mesh()->CopyFrom(process_mesh_.to_proto());
+  proto.mutable_process_mesh()->CopyFrom(
+      phi::distributed::to_proto(process_mesh_));
   proto.set_impl_type(impl_type_);
   proto.set_impl_idx(impl_idx_);
   proto.set_chunk_id(chunk_id_);
@@ -426,7 +430,7 @@ std::string OperatorDistAttr::serialize_to_string() {
   proto.SerializeToString(&data);
   PADDLE_ENFORCE_EQ(to_proto().SerializeToString(&data),
                     true,
-                    platform::errors::InvalidArgument(
+                    common::errors::InvalidArgument(
                         "Failed to serialize op dist attr to string."));
   return data;
 }
@@ -435,7 +439,7 @@ void OperatorDistAttr::parse_from_string(const std::string& data) {
   OperatorDistAttrProto proto;
   PADDLE_ENFORCE_EQ(proto.ParseFromString(data),
                     true,
-                    platform::errors::InvalidArgument(
+                    common::errors::InvalidArgument(
                         "Failed to parse op dist attr from string."));
   from_proto(proto);
 }

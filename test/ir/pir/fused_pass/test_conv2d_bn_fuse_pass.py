@@ -35,7 +35,7 @@ class TestConv2dBnPassPattern(PassTest):
     def is_program_valid(self, program=None):
         return True
 
-    def build_ir_progam(self):
+    def build_ir_program(self):
         with paddle.pir_utils.IrGuard():
             main_prog = paddle.static.Program()
             start_prog = paddle.static.Program()
@@ -58,7 +58,7 @@ class TestConv2dBnPassPattern(PassTest):
                 )
                 out = bn(conv2d(x))
                 out = paddle.assign(out)
-                self.pass_list = ['conv2d_bn_fuse_pass']
+                self.pass_attr_list = [{'conv2d_bn_fuse_pass': {}}]
                 self.feeds = {
                     "x": np.random.random((3, 1, 28, 28)).astype("float32")
                 }
@@ -70,7 +70,7 @@ class TestConv2dBnPassPattern(PassTest):
                 return [main_prog, start_prog]
 
     def sample_program(self):
-        pir_program = self.build_ir_progam()
+        pir_program = self.build_ir_program()
         yield pir_program, False
 
     def test_check_output(self):

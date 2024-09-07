@@ -27,9 +27,14 @@ std::shared_ptr<IndexExprInferContext> MakeIndexExprInferContext(
   const auto& anchor_iterators = igroup.GetAnchorIterators();
 
   for (std::size_t i = 0; i < anchor_iterators->size(); ++i) {
-    CHECK(anchor_iterator2value
-              .emplace(anchor_iterators->at(i), anchor_iterators->at(i))
-              .second);
+    PADDLE_ENFORCE_EQ(
+        anchor_iterator2value
+            .emplace(anchor_iterators->at(i), anchor_iterators->at(i))
+            .second,
+        true,
+        ::common::errors::InvalidArgument(
+            "The element in anchor iterators failed to insert in anchor "
+            "iterator2value! Please check."));
   }
 
   return std::make_shared<IndexExprInferContext>(anchor_iterator2value);
@@ -59,9 +64,8 @@ List<LoopSize> MakeLoopSizeForTensorImpl(const adapter::Tensor& tensor) {
 
 List<LoopSize> MakeLoopSizeForTensorImpl(const adapter::DynamicTensor& tensor) {
   List<LoopSize> ret{};
-  for (const std::optional<DimExpr>& dim : tensor.GetShape()) {
-    CHECK(dim.has_value());
-    ret->emplace_back(dim.value());
+  for (const DimExpr& dim : tensor.GetShape()) {
+    ret->emplace_back(dim);
   }
   return ret;
 }
@@ -103,10 +107,10 @@ List<Iterator> IGroup::GetIndexIterators(const Index& index) const {
     } else if (arg_pos.Has<Undefined>()) {
       // do nothing
     } else {
-      LOG(FATAL) << "Dead code";
+      PADDLE_THROW(::common::errors::Fatal("Dead code"));
     }
   }
-  LOG(FATAL) << "Can not find anchor iterators";
+  PADDLE_THROW(::common::errors::Fatal("Can not find anchor iterators"));
 }
 
 }  // namespace cinn::adt
